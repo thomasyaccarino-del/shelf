@@ -209,7 +209,12 @@ function doLookup(code){
   pendingBarcode=code; setStatus('Looking up '+code+'…');
   document.getElementById('candidates').innerHTML='';
   api('lookupBarcode',{code:code}).then(res=>{
-    if(res.error){ setStatus(res.error,'err'); return; }
+    if(res.error){
+      let msg=res.error;
+      if(res.debug){ msg+=' [server got: HTTP '+res.debug.status+' — '+(res.debug.snippet||'').slice(0,120)+']'; }
+      setStatus(msg,'err');
+      return;
+    }
     setStatus('Found: "'+res.productTitle+'" — pick the right match:','ok');
     renderCandidates(res.results);
   }).catch(e=>setStatus('Lookup failed: '+e.message,'err'));
