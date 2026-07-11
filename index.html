@@ -102,18 +102,14 @@
 </header>
 
 <div class="screen active" id="scan">
-  <div id="reader"></div>
-  <button class="btn btn-amber" id="startBtn" onclick="toggleScanner()">Start camera</button>
-  <p class="hint">Camera not cooperating? Type the barcode number:</p>
+  <p class="hint" style="margin-top:2px">Type a title to find it in the movie database — the fast, reliable way to add anything, owned or wishlist.</p>
   <div class="row">
-    <input type="tel" id="manualCode" placeholder="e.g. 025192073281">
-    <button class="iconbtn" style="width:52px;height:48px" onclick="lookupManual()">&rarr;</button>
-  </div>
-  <p class="hint">Or search by title (for wishlist items you don't own):</p>
-  <div class="row">
-    <input type="text" id="titleQuery" placeholder="e.g. Blade Runner 2049">
+    <input type="text" id="titleQuery" placeholder="e.g. Blade Runner 2049" autocomplete="off">
     <button class="iconbtn" style="width:52px;height:48px" onclick="searchByTitle()">&rarr;</button>
   </div>
+  <button class="btn btn-ghost" onclick="toggleScanner()" id="startBtn">Scan a barcode instead</button>
+  <div id="reader" style="margin-top:12px; display:none"></div>
+  <p class="hint" id="scanHelp" style="display:none">Point at the barcode, then confirm the title that pops into the search box.</p>
   <div class="status" id="scanStatus"></div>
   <div id="candidates"></div>
 </div>
@@ -189,42 +185,38 @@ function show(id, btn){
   if(id==='collection'||id==='queue') loadCollection();
 }
 
-/* ---------- Scanner ---------- */
+/* ---------- Scanner: a scan just captures the barcode and sends you to title search ---------- */
 function toggleScanner(){
   const btn=document.getElementById('startBtn');
-  if(scanning){ scanner.stop().catch(()=>{}); scanning=false; btn.textContent='Start camera'; return; }
+  const reader=document.getElementById('reader');
+  const help=document.getElementById('scanHelp');
+  if(scanning){ scanner.stop().catch(()=>{}); scanning=false; btn.textContent='Scan a barcode instead';
+    reader.style.display='none'; help.style.display='none'; return; }
+  reader.style.display='block'; help.style.display='block';
   scanner = scanner || new Html5Qrcode('reader');
   const fmts=[Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
               Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8];
   scanner.start({facingMode:'environment'},
     {fps:10, qrbox:{width:260,height:130}, formatsToSupport:fmts},
-    code=>{ toggleScanner(); doLookup(code); },
+    code=>{
+      pendingBarcode=code;               // remember it so the saved row keeps the barcode
+      toggleScanner();                    // stop camera
+      const box=document.getElementById('titleQuery');
+      box.focus();
+      setStatus('Scanned '+code+'. Type the title of this disc and pick it below — I\'ll tag it with this barcode.','ok');
+    },
     ()=>{}).then(()=>{ scanning=true; btn.textContent='Stop camera'; })
-  .catch(()=>{ setStatus('Camera blocked — use the barcode box below.','err'); });
+  .catch(()=>{ setStatus('Camera unavailable here — just type the title above.','err');
+    reader.style.display='none'; help.style.display='none'; });
 }
-function lookupManual(){ const v=document.getElementById('manualCode').value.trim(); if(v) doLookup(v); }
 function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.textContent=msg; el.className='status '+(cls||''); }
 
-function doLookup(code){
-  pendingBarcode=code; setStatus('Looking up '+code+'…');
-  document.getElementById('candidates').innerHTML='';
-  api('lookupBarcode',{code:code}).then(res=>{
-    if(res.error){
-      let msg=res.error;
-      if(res.debug){ msg+=' [server got: HTTP '+res.debug.status+' — '+(res.debug.snippet||'').slice(0,120)+']'; }
-      setStatus(msg,'err');
-      return;
-    }
-    setStatus('Found: "'+res.productTitle+'" — pick the right match:','ok');
-    renderCandidates(res.results);
-  }).catch(e=>setStatus('Lookup failed: '+e.message,'err'));
-}
 function searchByTitle(){
   const q=document.getElementById('titleQuery').value.trim(); if(!q) return;
-  pendingBarcode=''; setStatus('Searching "'+q+'"…');
+  setStatus('Searching "'+q+'"…');
   api('searchTitles',{query:q}).then(res=>{
     const list=res.results||[];
-    setStatus(list.length?'Pick the right match:':'No matches found.', list.length?'ok':'err');
+    setStatus(list.length?'Pick the right match:':'No matches — try a shorter or simpler title.', list.length?'ok':'err');
     renderCandidates(list);
   }).catch(e=>setStatus('Search failed: '+e.message,'err'));
 }
@@ -258,6 +250,7 @@ function openAddSheet(r){
       closeSheet();
       if(res.error){ setStatus(res.error,'err'); return; }
       setStatus('✓ Added '+res.title+(res.providers?' · streaming on '+res.providers:''),'ok');
+      pendingBarcode=''; document.getElementById('titleQuery').value='';
       document.getElementById('candidates').innerHTML=''; loadCollection();
     }).catch(e=>{ closeSheet(); setStatus('Add failed: '+e.message,'err'); });
   };
