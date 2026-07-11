@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Shelf</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#14161a; --surface:#1e2128; --surface2:#262a33;
+    --text:#f2f0ea; --muted:#8b8f98; --line:#31353f;
+    --amber:#f5b942; --green:#6fbf8b; --red:#d96b6b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  body{margin:0; background:var(--bg); color:var(--text);
+       font-family:'Outfit',system-ui,sans-serif; padding-bottom:76px}
+  header{padding:18px 16px 8px}
+  header h1{margin:0; font-size:22px; font-weight:800; letter-spacing:.08em}
+  header h1 span{color:var(--amber)}
+  header p{margin:2px 0 0; color:var(--muted); font-size:13px; font-weight:300}
+  .screen{display:none; padding:8px 16px 24px}
+  .screen.active{display:block}
+  nav{position:fixed; bottom:0; left:0; right:0; display:flex;
+      background:var(--surface); border-top:1px solid var(--line); z-index:20}
+  nav button{flex:1; background:none; border:none; color:var(--muted);
+      font:600 12px 'Outfit'; padding:12px 0 max(12px, env(safe-area-inset-bottom));
+      letter-spacing:.05em; cursor:pointer}
+  nav button .ico{display:block; font-size:20px; margin-bottom:2px}
+  nav button.active{color:var(--amber)}
+  #reader{border-radius:14px; overflow:hidden; background:var(--surface);
+          border:1px solid var(--line); min-height:120px}
+  .btn{display:block; width:100%; padding:14px; margin-top:12px; border:none;
+       border-radius:12px; font:600 15px 'Outfit'; cursor:pointer}
+  .btn-amber{background:var(--amber); color:#14161a}
+  .btn-ghost{background:var(--surface); color:var(--text); border:1px solid var(--line)}
+  .row{display:flex; gap:8px}
+  input[type=text], input[type=tel], input[type=password], select{
+     width:100%; padding:13px; border-radius:12px; border:1px solid var(--line);
+     background:var(--surface); color:var(--text); font:400 15px 'Outfit'; outline:none}
+  input:focus{border-color:var(--amber)}
+  .hint{color:var(--muted); font-size:13px; margin:14px 0 6px; font-weight:300}
+  .status{margin-top:12px; font-size:14px; color:var(--muted); min-height:20px}
+  .status.err{color:var(--red)} .status.ok{color:var(--green)}
+  .card{display:flex; gap:12px; background:var(--surface); border:1px solid var(--line);
+        border-radius:14px; padding:10px; margin-top:10px; align-items:center}
+  .card img{width:52px; height:78px; object-fit:cover; border-radius:8px; background:var(--surface2); flex-shrink:0}
+  .card .noimg{width:52px; height:78px; border-radius:8px; background:var(--surface2);
+        display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0}
+  .card .info{flex:1; min-width:0}
+  .card .t{font-weight:600; font-size:15px; line-height:1.25}
+  .card .m{color:var(--muted); font-size:12.5px; margin-top:2px}
+  .chips{margin-top:5px; display:flex; flex-wrap:wrap; gap:4px}
+  .chip{font-size:11px; padding:2px 8px; border-radius:99px; background:var(--surface2); color:var(--muted)}
+  .chip.owned{background:rgba(111,191,139,.15); color:var(--green)}
+  .chip.stream{background:rgba(245,185,66,.12); color:var(--amber)}
+  .chip.none{background:rgba(217,107,107,.12); color:var(--red)}
+  .iconbtn{background:var(--surface2); border:1px solid var(--line); color:var(--text);
+        border-radius:10px; width:38px; height:38px; font-size:16px; cursor:pointer; flex-shrink:0}
+  .stack{display:flex; flex-direction:column; gap:6px}
+  .num{font:800 14px 'Outfit'; color:var(--amber); width:26px; text-align:center; flex-shrink:0}
+  .filters{display:flex; gap:6px; margin-top:10px; overflow-x:auto; padding-bottom:2px}
+  .filters button{border:1px solid var(--line); background:var(--surface); color:var(--muted);
+        border-radius:99px; padding:7px 14px; font:600 12.5px 'Outfit'; white-space:nowrap; cursor:pointer}
+  .filters button.on{background:var(--amber); border-color:var(--amber); color:#14161a}
+  .empty{text-align:center; color:var(--muted); padding:48px 20px; font-weight:300}
+  .empty .big{font-size:34px; margin-bottom:8px}
+  #sheetBack{display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:30}
+  #sheet{position:fixed; left:0; right:0; bottom:0; background:var(--surface);
+         border-radius:18px 18px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom));
+         z-index:31; max-height:80vh; overflow-y:auto; display:none}
+  #sheet h3{margin:0 0 4px; font-size:17px}
+  #sheet .sub{color:var(--muted); font-size:13px; margin-bottom:10px; font-weight:300}
+  .optrow{display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--line)}
+  .toggle{width:52px; height:30px; border-radius:99px; background:var(--surface2); border:1px solid var(--line);
+          position:relative; cursor:pointer; transition:background .15s}
+  .toggle::after{content:''; position:absolute; top:3px; left:3px; width:22px; height:22px;
+          border-radius:50%; background:var(--muted); transition:all .15s}
+  .toggle.on{background:var(--green); border-color:var(--green)}
+  .toggle.on::after{left:26px; background:#14161a}
+  #setup{position:fixed; inset:0; background:var(--bg); z-index:50; padding:40px 22px; display:none}
+  #setup h2{font-size:20px; margin:0 0 6px}
+  #setup p{color:var(--muted); font-size:14px; font-weight:300; line-height:1.5}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+</style>
+</head>
+<body>
+
+<!-- First-run setup: paste the Apps Script URL + password once -->
+<div id="setup">
+  <h2>Connect to your sheet</h2>
+  <p>Paste the Apps Script web-app URL and the password you set in Code.gs. Stored on this device only.</p>
+  <input type="text" id="setupUrl" placeholder="https://script.google.com/macros/s/…/exec" style="margin-top:16px">
+  <input type="password" id="setupSecret" placeholder="Your app password" style="margin-top:10px">
+  <button class="btn btn-amber" onclick="saveSetup()">Connect</button>
+  <div class="status" id="setupStatus"></div>
+</div>
+
+<header>
+  <h1>SHE<span>L</span>F</h1>
+  <p id="subtitle">Your collection, one scan at a time</p>
+</header>
+
+<div class="screen active" id="scan">
+  <div id="reader"></div>
+  <button class="btn btn-amber" id="startBtn" onclick="toggleScanner()">Start camera</button>
+  <p class="hint">Camera not cooperating? Type the barcode number:</p>
+  <div class="row">
+    <input type="tel" id="manualCode" placeholder="e.g. 025192073281">
+    <button class="iconbtn" style="width:52px;height:48px" onclick="lookupManual()">&rarr;</button>
+  </div>
+  <p class="hint">Or search by title (for wishlist items you don't own):</p>
+  <div class="row">
+    <input type="text" id="titleQuery" placeholder="e.g. Blade Runner 2049">
+    <button class="iconbtn" style="width:52px;height:48px" onclick="searchByTitle()">&rarr;</button>
+  </div>
+  <div class="status" id="scanStatus"></div>
+  <div id="candidates"></div>
+</div>
+
+<div class="screen" id="collection">
+  <input type="text" id="filterText" placeholder="Search your shelf…" oninput="renderCollection()">
+  <div class="filters">
+    <button class="on" data-f="all" onclick="setFilter(this)">All</button>
+    <button data-f="owned" onclick="setFilter(this)">Owned</button>
+    <button data-f="wish" onclick="setFilter(this)">Wishlist</button>
+    <button data-f="unwatched" onclick="setFilter(this)">Unwatched</button>
+    <button data-f="watched" onclick="setFilter(this)">Watched</button>
+  </div>
+  <div id="collList"></div>
+</div>
+
+<div class="screen" id="queue">
+  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. Arrows to reorder; &check; when watched.</p>
+  <div id="queueList"></div>
+</div>
+
+<nav>
+  <button class="active" onclick="show('scan',this)"><span class="ico">&#9635;</span>Scan</button>
+  <button onclick="show('collection',this)"><span class="ico">&#9636;</span>Collection</button>
+  <button onclick="show('queue',this)"><span class="ico">&#9654;</span>Watch Next</button>
+</nav>
+
+<div id="sheetBack" onclick="closeSheet()"></div>
+<div id="sheet"></div>
+
+<script>
+let scanner=null, scanning=false, items=[], filter='all', pendingBarcode='';
+let API_URL='', API_SECRET='';
+
+/* ---------- setup / config (stored on device) ---------- */
+function loadSetup(){
+  API_URL = localStorage.getItem('shelf_url') || '';
+  API_SECRET = localStorage.getItem('shelf_secret') || '';
+  if(!API_URL || !API_SECRET){ document.getElementById('setup').style.display='block'; }
+  else { loadCollection(); }
+}
+function saveSetup(){
+  const u=document.getElementById('setupUrl').value.trim();
+  const s=document.getElementById('setupSecret').value.trim();
+  if(!u || !s){ setSetupStatus('Fill in both fields.',true); return; }
+  setSetupStatus('Testing connection…',false);
+  API_URL=u; API_SECRET=s;
+  api('getCollection',{}).then(res=>{
+    if(res.error){ setSetupStatus('Connected, but: '+res.error,true); return; }
+    localStorage.setItem('shelf_url',u); localStorage.setItem('shelf_secret',s);
+    document.getElementById('setup').style.display='none';
+    items=res.items||[]; renderCollection(); renderQueue();
+  }).catch(e=>setSetupStatus('Could not reach the backend. Check the URL. ('+e.message+')',true));
+}
+function setSetupStatus(m,err){ const el=document.getElementById('setupStatus');
+  el.textContent=m; el.className='status '+(err?'err':'ok'); }
+
+/* ---------- API call: text/plain avoids the CORS preflight ---------- */
+function api(action, payload){
+  return fetch(API_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ secret:API_SECRET, action:action, payload:payload||{} })
+  }).then(r=>r.json());
+}
+
+function show(id, btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(id!=='scan' && scanning) toggleScanner();
+  if(id==='collection'||id==='queue') loadCollection();
+}
+
+/* ---------- Scanner ---------- */
+function toggleScanner(){
+  const btn=document.getElementById('startBtn');
+  if(scanning){ scanner.stop().catch(()=>{}); scanning=false; btn.textContent='Start camera'; return; }
+  scanner = scanner || new Html5Qrcode('reader');
+  const fmts=[Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+              Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8];
+  scanner.start({facingMode:'environment'},
+    {fps:10, qrbox:{width:260,height:130}, formatsToSupport:fmts},
+    code=>{ toggleScanner(); doLookup(code); },
+    ()=>{}).then(()=>{ scanning=true; btn.textContent='Stop camera'; })
+  .catch(()=>{ setStatus('Camera blocked — use the barcode box below.','err'); });
+}
+function lookupManual(){ const v=document.getElementById('manualCode').value.trim(); if(v) doLookup(v); }
+function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.textContent=msg; el.className='status '+(cls||''); }
+
+function doLookup(code){
+  pendingBarcode=code; setStatus('Looking up '+code+'…');
+  document.getElementById('candidates').innerHTML='';
+  api('lookupBarcode',{code:code}).then(res=>{
+    if(res.error){ setStatus(res.error,'err'); return; }
+    setStatus('Found: "'+res.productTitle+'" — pick the right match:','ok');
+    renderCandidates(res.results);
+  }).catch(e=>setStatus('Lookup failed: '+e.message,'err'));
+}
+function searchByTitle(){
+  const q=document.getElementById('titleQuery').value.trim(); if(!q) return;
+  pendingBarcode=''; setStatus('Searching "'+q+'"…');
+  api('searchTitles',{query:q}).then(res=>{
+    const list=res.results||[];
+    setStatus(list.length?'Pick the right match:':'No matches found.', list.length?'ok':'err');
+    renderCandidates(list);
+  }).catch(e=>setStatus('Search failed: '+e.message,'err'));
+}
+function renderCandidates(list){
+  const box=document.getElementById('candidates'); box.innerHTML='';
+  (list||[]).forEach(r=>{
+    const el=document.createElement('div'); el.className='card';
+    el.innerHTML=(r.poster?'<img src="'+r.poster+'">':'<div class="noimg">&#127916;</div>')+
+      '<div class="info"><div class="t">'+esc(r.title)+'</div><div class="m">'+
+      (r.year||'—')+' · '+(r.type==='tv'?'TV series':'Movie')+'</div></div>';
+    el.onclick=()=>openAddSheet(r);
+    box.appendChild(el);
+  });
+}
+
+function openAddSheet(r){
+  const owned = !!pendingBarcode;
+  openSheet(
+    '<h3>'+esc(r.title)+' <span style="color:var(--muted);font-weight:300">'+(r.year||'')+'</span></h3>'+
+    '<div class="sub">'+(r.type==='tv'?'TV series':'Movie')+(pendingBarcode?' · barcode '+pendingBarcode:'')+'</div>'+
+    '<div class="optrow"><span>I own this</span><div class="toggle'+(owned?' on':'')+'" id="ownTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
+    '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
+    '<select id="fmtSel"><option>Blu-ray</option><option>4K UHD</option><option>DVD</option><option>Digital</option><option value="">—</option></select></div>'+
+    '<button class="btn btn-amber" id="addBtn">Add to shelf</button>');
+  document.getElementById('addBtn').onclick=()=>{
+    const item={id:r.id,type:r.type,title:r.title,year:r.year,poster:r.poster,
+      owned:document.getElementById('ownTgl').classList.contains('on'),
+      format:document.getElementById('fmtSel').value, barcode:pendingBarcode};
+    document.getElementById('addBtn').textContent='Adding…';
+    api('addItem',{item:item}).then(res=>{
+      closeSheet();
+      if(res.error){ setStatus(res.error,'err'); return; }
+      setStatus('✓ Added '+res.title+(res.providers?' · streaming on '+res.providers:''),'ok');
+      document.getElementById('candidates').innerHTML=''; loadCollection();
+    }).catch(e=>{ closeSheet(); setStatus('Add failed: '+e.message,'err'); });
+  };
+}
+
+/* ---------- Collection ---------- */
+function loadCollection(){
+  api('getCollection',{}).then(res=>{ items=res.items||[]; renderCollection(); renderQueue(); })
+    .catch(()=>{});
+}
+function setFilter(btn){ filter=btn.dataset.f;
+  document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on'); renderCollection(); }
+function renderCollection(){
+  const q=(document.getElementById('filterText').value||'').toLowerCase();
+  const box=document.getElementById('collList'); box.innerHTML='';
+  let list=items.filter(i=>i.title.toLowerCase().includes(q));
+  if(filter==='owned') list=list.filter(i=>i.owned);
+  if(filter==='wish') list=list.filter(i=>!i.owned);
+  if(filter==='unwatched') list=list.filter(i=>!i.watched);
+  if(filter==='watched') list=list.filter(i=>i.watched);
+  if(!list.length){ box.innerHTML='<div class="empty"><div class="big">&#127902;</div>Nothing here yet.<br>Scan a barcode to start your shelf.</div>'; return; }
+  list.sort((a,b)=>a.title.localeCompare(b.title));
+  list.forEach(i=>box.appendChild(itemCard(i,false)));
+}
+function itemCard(i, queueMode, idx){
+  const el=document.createElement('div'); el.className='card';
+  let chips='';
+  if(i.owned) chips+='<span class="chip owned">Owned'+(i.format?' · '+esc(i.format):'')+'</span>';
+  else if(i.providers) chips+=i.providers.split(',').slice(0,3).map(p=>'<span class="chip stream">'+esc(p.trim())+'</span>').join('');
+  else chips+='<span class="chip none">Not streaming — rent/buy</span>';
+  if(i.watched) chips+='<span class="chip">Watched</span>';
+  el.innerHTML=(queueMode?'<div class="num">'+(idx+1)+'</div>':'')+
+    (i.poster?'<img src="'+i.poster+'">':'<div class="noimg">&#127916;</div>')+
+    '<div class="info"><div class="t">'+esc(i.title)+'</div><div class="m">'+(i.year||'—')+
+    ' · '+(i.type==='tv'?'TV':'Movie')+'</div><div class="chips">'+chips+'</div></div>';
+  if(queueMode){
+    const s=document.createElement('div'); s.className='stack';
+    s.innerHTML='<button class="iconbtn" onclick="moveItem(event,'+idx+',-1)">&uarr;</button>'+
+                '<button class="iconbtn" onclick="moveItem(event,'+idx+',1)">&darr;</button>';
+    el.appendChild(s);
+    const w=document.createElement('button'); w.className='iconbtn'; w.style.color='var(--green)';
+    w.innerHTML='&check;'; w.onclick=e=>{e.stopPropagation(); markWatched(i);};
+    el.appendChild(w);
+  }
+  el.onclick=()=>openDetailSheet(i);
+  return el;
+}
+function openDetailSheet(i){
+  openSheet(
+    '<h3>'+esc(i.title)+' <span style="color:var(--muted);font-weight:300">'+(i.year||'')+'</span></h3>'+
+    '<div class="sub">'+(i.type==='tv'?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
+    '<div class="optrow"><span>I own this</span><div class="toggle'+(i.owned?' on':'')+'" id="dOwn"></div></div>'+
+    '<div class="optrow"><span>Watched</span><div class="toggle'+(i.watched?' on':'')+'" id="dWatch"></div></div>'+
+    '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
+    '<select id="dFmt"><option'+(i.format==='Blu-ray'?' selected':'')+'>Blu-ray</option><option'+(i.format==='4K UHD'?' selected':'')+'>4K UHD</option><option'+(i.format==='DVD'?' selected':'')+'>DVD</option><option'+(i.format==='Digital'?' selected':'')+'>Digital</option><option value=""'+(!i.format?' selected':'')+'>—</option></select></div>'+
+    '<button class="btn btn-ghost" id="dRefresh">Refresh streaming info</button>'+
+    '<button class="btn btn-ghost" id="dRemove" style="color:var(--red)">Remove from shelf</button>');
+  document.getElementById('dOwn').onclick=function(){ this.classList.toggle('on'); push(i,{owned:this.classList.contains('on')}); };
+  document.getElementById('dWatch').onclick=function(){ this.classList.toggle('on'); push(i,{watched:this.classList.contains('on')}); };
+  document.getElementById('dFmt').onchange=function(){ push(i,{format:this.value}); };
+  document.getElementById('dRefresh').onclick=function(){ this.textContent='Refreshing…';
+    api('refreshProviders',{id:i.id,type:i.type}).then(()=>{ closeSheet(); loadCollection(); }); };
+  document.getElementById('dRemove').onclick=function(){
+    if(!confirm('Remove "'+i.title+'"?')) return;
+    api('removeItem',{id:i.id,type:i.type}).then(()=>{ closeSheet(); loadCollection(); }); };
+}
+function push(i,fields){ Object.assign(i,fields);
+  api('updateItem',{id:i.id,type:i.type,fields:fields}).then(()=>{ renderCollection(); renderQueue(); }); }
+
+/* ---------- Watch queue ---------- */
+function queueItems(){ return items.filter(i=>!i.watched).sort((a,b)=>a.order-b.order); }
+function renderQueue(){
+  const box=document.getElementById('queueList'); box.innerHTML='';
+  const q=queueItems();
+  if(!q.length){ box.innerHTML='<div class="empty"><div class="big">&#127871;</div>Queue is empty — everything\'s watched!</div>'; return; }
+  q.forEach((i,idx)=>box.appendChild(itemCard(i,true,idx)));
+}
+function moveItem(e,idx,dir){
+  e.stopPropagation();
+  const q=queueItems(); const j=idx+dir;
+  if(j<0||j>=q.length) return;
+  [q[idx],q[j]]=[q[j],q[idx]];
+  q.forEach((it,k)=>it.order=k+1);
+  renderQueue();
+  api('setWatchOrder',{orderedKeys:q.map(it=>it.type+':'+it.id)});
+}
+function markWatched(i){ push(i,{watched:true}); }
+
+function openSheet(html){ document.getElementById('sheet').innerHTML=html;
+  document.getElementById('sheet').style.display='block';
+  document.getElementById('sheetBack').style.display='block'; }
+function closeSheet(){ document.getElementById('sheet').style.display='none';
+  document.getElementById('sheetBack').style.display='none'; }
+function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+loadSetup();
+</script>
+</body>
+</html>
