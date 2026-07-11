@@ -65,6 +65,15 @@
   .filters button.on{background:var(--amber); border-color:var(--amber); color:#14161a}
   .empty{text-align:center; color:var(--muted); padding:48px 20px; font-weight:300}
   .empty .big{font-size:34px; margin-bottom:8px}
+  .tiles{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px}
+  .tile{background:var(--surface); border:1px solid var(--line); border-radius:14px;
+        padding:14px; cursor:pointer; text-align:left}
+  .tile.wide{grid-column:1 / -1}
+  .tile .k{font:800 24px 'Outfit'; color:var(--amber); line-height:1.1}
+  .tile .k .u{font-size:14px; font-weight:600; color:var(--muted); margin-left:2px}
+  .tile .l{font-size:12.5px; color:var(--muted); margin-top:3px; font-weight:300}
+  .tile.flat{cursor:default}
+  .sect{margin-top:20px; font:600 13px 'Outfit'; color:var(--muted); letter-spacing:.06em; text-transform:uppercase}
   #sheetBack{display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:30}
   #sheet{position:fixed; left:0; right:0; bottom:0; background:var(--surface);
          border-radius:18px 18px 0 0; padding:18px 16px calc(18px + env(safe-area-inset-bottom));
@@ -124,6 +133,18 @@
     <button data-f="unwatched" onclick="setFilter(this)">Unwatched</button>
     <button data-f="watched" onclick="setFilter(this)">Watched</button>
   </div>
+  <div class="filters">
+    <button class="on" data-t="all" onclick="setTypeFilter(this)">Any type</button>
+    <button data-t="movie" onclick="setTypeFilter(this)">Movies</button>
+    <button data-t="tv" onclick="setTypeFilter(this)">TV</button>
+  </div>
+  <div class="filters">
+    <button class="on" data-fmt="all" onclick="setFmtFilter(this)">Any format</button>
+    <button data-fmt="Blu-ray" onclick="setFmtFilter(this)">Blu-ray</button>
+    <button data-fmt="4K UHD" onclick="setFmtFilter(this)">4K UHD</button>
+    <button data-fmt="DVD" onclick="setFmtFilter(this)">DVD</button>
+    <button data-fmt="Digital" onclick="setFmtFilter(this)">Digital</button>
+  </div>
   <div id="collList"></div>
 </div>
 
@@ -132,17 +153,23 @@
   <div id="queueList"></div>
 </div>
 
+<div class="screen" id="stats">
+  <p class="hint" style="margin-top:2px">Based on titles you own. Tap any tile to see those titles.</p>
+  <div id="statsBody"></div>
+</div>
+
 <nav>
   <button class="active" onclick="show('scan',this)"><span class="ico">&#9635;</span>Scan</button>
   <button onclick="show('collection',this)"><span class="ico">&#9636;</span>Collection</button>
   <button onclick="show('queue',this)"><span class="ico">&#9654;</span>Watch Next</button>
+  <button onclick="show('stats',this)"><span class="ico">&#9679;</span>Stats</button>
 </nav>
 
 <div id="sheetBack" onclick="closeSheet()"></div>
 <div id="sheet"></div>
 
 <script>
-let scanner=null, scanning=false, items=[], filter='all', pendingBarcode='', pendingMeta=null;
+let scanner=null, scanning=false, items=[], filter='all', typeFilter='all', fmtFilter='all', pendingBarcode='', pendingMeta=null;
 let API_URL='', API_SECRET='';
 
 /* ---------- setup / config (stored on device) ---------- */
@@ -183,7 +210,7 @@ function show(id, btn){
   document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   if(id!=='scan' && scanning) toggleScanner();
-  if(id==='collection'||id==='queue') loadCollection();
+  if(id==='collection'||id==='queue'||id==='stats') loadCollection();
 }
 
 /* ---------- Scanner: a scan just captures the barcode and sends you to title search ---------- */
@@ -302,13 +329,36 @@ function loadCollection(){
   api('getCollection',{}).then(res=>{
     if(res && res.error){ setStatus('Load error: '+res.error,'err'); return; }
     items=(res && res.items)||[];
-    renderCollection(); renderQueue();
-    if(!items.length){ setStatus('Backend returned 0 items.','err'); }
+    renderCollection(); renderQueue(); renderStats();
   }).catch(e=>{ setStatus('Could not load collection: '+(e && e.message ? e.message : e),'err'); });
 }
 function setFilter(btn){ filter=btn.dataset.f;
-  document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.filters button[data-f]').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on'); renderCollection(); }
+function setTypeFilter(btn){ typeFilter=btn.dataset.t;
+  document.querySelectorAll('.filters button[data-t]').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on'); renderCollection(); }
+function setFmtFilter(btn){ fmtFilter=btn.dataset.fmt;
+  document.querySelectorAll('.filters button[data-fmt]').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on'); renderCollection(); }
+
+// Set filters programmatically (used when tapping an analytics tile).
+function applyFilters(f, t, fmt){
+  filter=f; typeFilter=t; fmtFilter=fmt;
+  document.getElementById('filterText').value='';
+  document.querySelectorAll('.filters button[data-f]').forEach(b=>b.classList.toggle('on', b.dataset.f===f));
+  document.querySelectorAll('.filters button[data-t]').forEach(b=>b.classList.toggle('on', b.dataset.t===t));
+  document.querySelectorAll('.filters button[data-fmt]').forEach(b=>b.classList.toggle('on', b.dataset.fmt===fmt));
+  // Switch to the Collection tab.
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('collection').classList.add('active');
+  const navs=document.querySelectorAll('nav button');
+  navs.forEach(b=>b.classList.remove('active'));
+  if(navs[1]) navs[1].classList.add('active');
+  renderCollection();
+  window.scrollTo(0,0);
+}
+
 function renderCollection(){
   const q=(document.getElementById('filterText').value||'').toLowerCase();
   const box=document.getElementById('collList'); box.innerHTML='';
@@ -318,7 +368,9 @@ function renderCollection(){
   if(filter==='watchlist') list=list.filter(i=>i.watchlist);
   if(filter==='unwatched') list=list.filter(i=>!i.watched);
   if(filter==='watched') list=list.filter(i=>i.watched);
-  if(!list.length){ box.innerHTML='<div class="empty"><div class="big">&#127902;</div>Nothing here yet.<br>Scan a barcode to start your shelf.</div>'; return; }
+  if(typeFilter!=='all') list=list.filter(i=>i.type===typeFilter);
+  if(fmtFilter!=='all') list=list.filter(i=>i.format===fmtFilter);
+  if(!list.length){ box.innerHTML='<div class="empty"><div class="big">&#127902;</div>Nothing matches these filters.</div>'; return; }
   list.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
   list.forEach(i=>{ try{ box.appendChild(itemCard(i,false)); }catch(e){ /* skip a bad row, keep the rest */ } });
 }
@@ -354,21 +406,37 @@ function detailLine_(i){
   return parts.join(' · ');
 }
 function openDetailSheet(i){
+  const isTv = i.type==='tv';
   openSheet(
     '<h3>'+esc(i.title)+' <span style="color:var(--muted);font-weight:300">'+(i.year||'')+'</span></h3>'+
-    '<div class="sub">'+(i.type==='tv'?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
+    '<div class="sub">'+(isTv?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
     (detailLine_(i)?'<div class="sub" style="margin-top:-4px">'+detailLine_(i)+'</div>':'')+
     '<div class="optrow"><span>On my watchlist</span><div class="toggle'+(i.watchlist?' on':'')+'" id="dWatchlist"></div></div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(i.owned?' on':'')+'" id="dOwn"></div></div>'+
     '<div class="optrow"><span>Watched</span><div class="toggle'+(i.watched?' on':'')+'" id="dWatch"></div></div>'+
-    '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
+    '<div class="optrow"><span style="margin-right:10px">Format</span>'+
     '<select id="dFmt">'+fmtOptions_(i.format||'')+'</select></div>'+
+    '<div class="optrow"'+(isTv?'':' style="border:none"')+'><span style="margin-right:10px">'+
+      (isTv?'Total runtime':'Runtime')+'</span>'+
+    '<input type="text" id="dRuntime" value="'+esc(i.runtime||'')+'" placeholder="'+(isTv?'e.g. 1200 min or 20h':'e.g. 116 min')+'" style="max-width:150px;text-align:right"></div>'+
+    (isTv?
+      '<div class="optrow"><span style="margin-right:10px">Seasons owned</span>'+
+      '<input type="tel" id="dSeasons" value="'+esc(i.seasons||'')+'" placeholder="0" style="max-width:80px;text-align:right"></div>'+
+      '<div class="optrow" style="border:none"><span style="margin-right:10px">Episodes owned</span>'+
+      '<input type="tel" id="dEpisodes" value="'+esc(i.episodes||'')+'" placeholder="0" style="max-width:80px;text-align:right"></div>'
+      : '')+
     '<button class="btn btn-ghost" id="dRefresh">Refresh streaming info</button>'+
     '<button class="btn btn-ghost" id="dRemove" style="color:var(--red)">Remove from shelf</button>');
   document.getElementById('dWatchlist').onclick=function(){ this.classList.toggle('on'); push(i,{watchlist:this.classList.contains('on')}); };
   document.getElementById('dOwn').onclick=function(){ this.classList.toggle('on'); push(i,{owned:this.classList.contains('on')}); };
   document.getElementById('dWatch').onclick=function(){ this.classList.toggle('on'); push(i,{watched:this.classList.contains('on')}); };
   document.getElementById('dFmt').onchange=function(){ push(i,{format:this.value}); };
+  // Save on blur (tap away) so typing isn't interrupted by a save per keystroke.
+  document.getElementById('dRuntime').onblur=function(){ push(i,{runtime:this.value.trim()}); };
+  if(isTv){
+    document.getElementById('dSeasons').onblur=function(){ push(i,{seasons:parseInt(this.value,10)||''}); };
+    document.getElementById('dEpisodes').onblur=function(){ push(i,{episodes:parseInt(this.value,10)||''}); };
+  }
   document.getElementById('dRefresh').onclick=function(){ this.textContent='Refreshing…';
     api('refreshProviders',{id:i.id,type:i.type}).then(()=>{ closeSheet(); loadCollection(); }); };
   document.getElementById('dRemove').onclick=function(){
@@ -376,8 +444,88 @@ function openDetailSheet(i){
     api('removeItem',{id:i.id,type:i.type}).then(()=>{ closeSheet(); loadCollection(); }); };
 }
 function push(i,fields){ Object.assign(i,fields);
-  api('updateItem',{id:i.id,type:i.type,fields:fields}).then(()=>{ renderCollection(); renderQueue(); }); }
+  api('updateItem',{id:i.id,type:i.type,fields:fields}).then(()=>{ renderCollection(); renderQueue(); renderStats(); }); }
 
+/* ---------- Analytics (owned titles only) ---------- */
+// Accepts "142", "142 min", "2h 22m", "2h", "22m" — returns total minutes.
+function mins_(r){
+  const s=String(r||'').trim(); if(!s) return 0;
+  const hm=s.match(/(\d+)\s*h(?:ours?)?(?:\s*(\d+)\s*m)?/i);
+  if(hm) return parseInt(hm[1],10)*60 + (hm[2]?parseInt(hm[2],10):0);
+  const m=s.match(/(\d+)/);
+  return m?parseInt(m[1],10):0;
+}
+function hm_(total){
+  const h=Math.floor(total/60), m=total%60;
+  return {h:h, m:m};
+}
+function renderStats(){
+  const box=document.getElementById('statsBody'); if(!box) return;
+  const owned=items.filter(i=>i.owned);
+  if(!owned.length){
+    box.innerHTML='<div class="empty"><div class="big">&#128202;</div>No owned titles yet.<br>Add something and mark it owned.</div>';
+    return;
+  }
+  const movies=owned.filter(i=>i.type==='movie');
+  const tv=owned.filter(i=>i.type==='tv');
+
+  // Runtime is taken as entered: for movies that's the film's runtime; for TV
+  // it's the total you typed in for the seasons you actually own.
+  let movieMins=0; movies.forEach(i=>{ movieMins+=mins_(i.runtime); });
+  let tvMins=0; tv.forEach(i=>{ tvMins+=mins_(i.runtime); });
+  const totalMins=movieMins+tvMins;
+
+  const seasons=tv.reduce((s,i)=>s+(Number(i.seasons)||0),0);
+  const episodes=tv.reduce((s,i)=>s+(Number(i.episodes)||0),0);
+
+  const fmts={};
+  movies.forEach(i=>{ const f=i.format||'Unspecified'; fmts[f]=(fmts[f]||0)+1; });
+
+  const T=hm_(totalMins), M=hm_(movieMins), V=hm_(tvMins);
+
+  let html='';
+  html+='<div class="sect">Total watch time</div><div class="tiles">';
+  html+=tile_(T.h+'<span class="u">h</span> '+T.m+'<span class="u">m</span>','Everything you own','all','all','all',true);
+  html+='</div>';
+
+  html+='<div class="sect">Library</div><div class="tiles">';
+  html+=tile_(movies.length,'Movies owned','owned','movie','all');
+  html+=tile_(tv.length,'TV shows owned','owned','tv','all');
+  html+=tile_(M.h+'<span class="u">h</span> '+M.m+'<span class="u">m</span>','Movie runtime','owned','movie','all');
+  html+=tile_(V.h+'<span class="u">h</span> '+V.m+'<span class="u">m</span>','TV runtime','owned','tv','all');
+  html+='</div>';
+
+  html+='<div class="sect">Television</div><div class="tiles">';
+  html+=tile_(seasons,'Seasons owned','owned','tv','all');
+  html+=tile_(episodes,'Episodes owned','owned','tv','all');
+  const tvNoRuntime=tv.filter(i=>!mins_(i.runtime)).length;
+  if(tvNoRuntime){
+    html+='<div class="tile flat wide"><div class="l">'+tvNoRuntime+' owned TV title'+(tvNoRuntime>1?'s are':' is')+
+          ' missing a total runtime — open '+(tvNoRuntime>1?'them':'it')+' and enter it to include '+
+          (tvNoRuntime>1?'them':'it')+' in watch time.</div></div>';
+  }
+  html+='</div>';
+
+  html+='<div class="sect">Movies by format</div><div class="tiles">';
+  const order=['4K UHD','Blu-ray','DVD','Digital','Unspecified'];
+  const keys=Object.keys(fmts).sort((a,b)=>{
+    const ia=order.indexOf(a), ib=order.indexOf(b);
+    return (ia<0?99:ia)-(ib<0?99:ib);
+  });
+  if(!keys.length){ html+='<div class="tile flat wide"><div class="l">No owned movies yet.</div></div>'; }
+  keys.forEach(f=>{
+    const target=(f==='Unspecified')?'all':f;
+    html+=tile_(fmts[f], f, 'owned','movie',target);
+  });
+  html+='</div>';
+
+  box.innerHTML=html;
+}
+function tile_(value,label,f,t,fmt,flat){
+  const cls='tile'+(flat?' flat wide':'');
+  const click=flat?'':' onclick="applyFilters(\''+f+'\',\''+t+'\',\''+fmt+'\')"';
+  return '<div class="'+cls+'"'+click+'><div class="k">'+value+'</div><div class="l">'+esc(label)+'</div></div>';
+}
 /* ---------- Watch queue ---------- */
 function queueItems(){ return items.filter(i=>i.watchlist && !i.watched).sort((a,b)=>a.order-b.order); }
 function renderQueue(){
