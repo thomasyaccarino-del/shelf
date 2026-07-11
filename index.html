@@ -194,21 +194,41 @@ function toggleScanner(){
   if(scanning){ scanner.stop().catch(()=>{}); scanning=false; btn.textContent='Scan a barcode instead';
     reader.style.display='none'; help.style.display='none'; return; }
   reader.style.display='block'; help.style.display='block';
+  setStatus('Starting camera…','');
   scanner = scanner || new Html5Qrcode('reader');
   const fmts=[Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
               Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8];
-  scanner.start({facingMode:'environment'},
-    {fps:10, qrbox:{width:260,height:130}, formatsToSupport:fmts},
-    code=>{
-      pendingBarcode=code;               // remember it so the saved row keeps the barcode
-      toggleScanner();                    // stop camera
-      const box=document.getElementById('titleQuery');
-      box.focus();
-      setStatus('Scanned '+code+'. Type the title of this disc and pick it below — I\'ll tag it with this barcode.','ok');
-    },
-    ()=>{}).then(()=>{ scanning=true; btn.textContent='Stop camera'; })
-  .catch(()=>{ setStatus('Camera unavailable here — just type the title above.','err');
-    reader.style.display='none'; help.style.display='none'; });
+  // Let the reader element actually become visible before attaching the camera —
+  // some browsers refuse to start a video stream into a display:none element.
+  setTimeout(function(){
+    scanner.start({facingMode:'environment'},
+      {fps:10, qrbox:{width:260,height:130}, formatsToSupport:fmts},
+      code=>{
+        pendingBarcode=code;               // remember it so the saved row keeps the barcode
+        toggleScanner();                    // stop camera
+        setStatus('Scanned '+code+' — looking up the disc…','');
+        api('scanBarcode',{code:code}).then(res=>{
+          if(res.found && (res.results||[]).length){
+            document.getElementById('titleQuery').value=res.query||'';
+            setStatus('Matched "'+res.discTitle+'"'+(res.year?' ('+res.year+')':'')+' — confirm below:','ok');
+            renderCandidates(res.results);
+          } else {
+            const box=document.getElementById('titleQuery'); box.focus();
+            if(res.error){
+              setStatus(res.error+' Type the title instead — barcode '+code+' will still be saved.','err');
+            } else {
+              setStatus('This disc isn\'t in the database. Type its title and pick it — I\'ll tag it with barcode '+code+'.', 'ok');
+            }
+          }
+        }).catch(e=>{
+          const box=document.getElementById('titleQuery'); box.focus();
+          setStatus('Lookup unavailable ('+e.message+'). Type the title instead — barcode '+code+' will still be saved.','err');
+        });
+      },
+      ()=>{}).then(()=>{ scanning=true; btn.textContent='Stop camera'; setStatus('Point at a barcode.','ok'); })
+    .catch(err=>{ setStatus('Camera error: '+(err && err.message ? err.message : err)+' — you can just type the title above.','err');
+      reader.style.display='none'; help.style.display='none'; });
+  }, 150);
 }
 function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.textContent=msg; el.className='status '+(cls||''); }
 
