@@ -120,6 +120,7 @@
     <button class="on" data-f="all" onclick="setFilter(this)">All</button>
     <button data-f="owned" onclick="setFilter(this)">Owned</button>
     <button data-f="wish" onclick="setFilter(this)">Wishlist</button>
+    <button data-f="watchlist" onclick="setFilter(this)">Watchlist</button>
     <button data-f="unwatched" onclick="setFilter(this)">Unwatched</button>
     <button data-f="watched" onclick="setFilter(this)">Watched</button>
   </div>
@@ -216,6 +217,7 @@ function searchByTitle(){
   setStatus('Searching "'+q+'"…');
   api('searchTitles',{query:q}).then(res=>{
     const list=res.results||[];
+    if(res.error){ setStatus('Search problem: '+res.error,'err'); renderCandidates([]); return; }
     setStatus(list.length?'Pick the right match:':'No matches — try a shorter or simpler title.', list.length?'ok':'err');
     renderCandidates(list);
   }).catch(e=>setStatus('Search failed: '+e.message,'err'));
@@ -270,6 +272,7 @@ function renderCollection(){
   let list=items.filter(i=>i.title.toLowerCase().includes(q));
   if(filter==='owned') list=list.filter(i=>i.owned);
   if(filter==='wish') list=list.filter(i=>!i.owned);
+  if(filter==='watchlist') list=list.filter(i=>i.watchlist);
   if(filter==='unwatched') list=list.filter(i=>!i.watched);
   if(filter==='watched') list=list.filter(i=>i.watched);
   if(!list.length){ box.innerHTML='<div class="empty"><div class="big">&#127902;</div>Nothing here yet.<br>Scan a barcode to start your shelf.</div>'; return; }
@@ -283,6 +286,7 @@ function itemCard(i, queueMode, idx){
   else if(i.providers) chips+=i.providers.split(',').slice(0,3).map(p=>'<span class="chip stream">'+esc(p.trim())+'</span>').join('');
   else chips+='<span class="chip none">Not streaming — rent/buy</span>';
   if(i.watched) chips+='<span class="chip">Watched</span>';
+  if(i.watchlist && !queueMode) chips+='<span class="chip" style="background:rgba(245,185,66,.12);color:var(--amber)">&#9733; Watchlist</span>';
   el.innerHTML=(queueMode?'<div class="num">'+(idx+1)+'</div>':'')+
     (i.poster?'<img src="'+i.poster+'">':'<div class="noimg">&#127916;</div>')+
     '<div class="info"><div class="t">'+esc(i.title)+'</div><div class="m">'+(i.year||'—')+
@@ -303,12 +307,14 @@ function openDetailSheet(i){
   openSheet(
     '<h3>'+esc(i.title)+' <span style="color:var(--muted);font-weight:300">'+(i.year||'')+'</span></h3>'+
     '<div class="sub">'+(i.type==='tv'?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
+    '<div class="optrow"><span>On my watchlist</span><div class="toggle'+(i.watchlist?' on':'')+'" id="dWatchlist"></div></div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(i.owned?' on':'')+'" id="dOwn"></div></div>'+
     '<div class="optrow"><span>Watched</span><div class="toggle'+(i.watched?' on':'')+'" id="dWatch"></div></div>'+
     '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
     '<select id="dFmt"><option'+(i.format==='Blu-ray'?' selected':'')+'>Blu-ray</option><option'+(i.format==='4K UHD'?' selected':'')+'>4K UHD</option><option'+(i.format==='DVD'?' selected':'')+'>DVD</option><option'+(i.format==='Digital'?' selected':'')+'>Digital</option><option value=""'+(!i.format?' selected':'')+'>—</option></select></div>'+
     '<button class="btn btn-ghost" id="dRefresh">Refresh streaming info</button>'+
     '<button class="btn btn-ghost" id="dRemove" style="color:var(--red)">Remove from shelf</button>');
+  document.getElementById('dWatchlist').onclick=function(){ this.classList.toggle('on'); push(i,{watchlist:this.classList.contains('on')}); };
   document.getElementById('dOwn').onclick=function(){ this.classList.toggle('on'); push(i,{owned:this.classList.contains('on')}); };
   document.getElementById('dWatch').onclick=function(){ this.classList.toggle('on'); push(i,{watched:this.classList.contains('on')}); };
   document.getElementById('dFmt').onchange=function(){ push(i,{format:this.value}); };
@@ -322,11 +328,11 @@ function push(i,fields){ Object.assign(i,fields);
   api('updateItem',{id:i.id,type:i.type,fields:fields}).then(()=>{ renderCollection(); renderQueue(); }); }
 
 /* ---------- Watch queue ---------- */
-function queueItems(){ return items.filter(i=>!i.watched).sort((a,b)=>a.order-b.order); }
+function queueItems(){ return items.filter(i=>i.watchlist && !i.watched).sort((a,b)=>a.order-b.order); }
 function renderQueue(){
   const box=document.getElementById('queueList'); box.innerHTML='';
   const q=queueItems();
-  if(!q.length){ box.innerHTML='<div class="empty"><div class="big">&#127871;</div>Queue is empty — everything\'s watched!</div>'; return; }
+  if(!q.length){ box.innerHTML='<div class="empty"><div class="big">&#127871;</div>Your watchlist is empty.<br>Open any title and turn on <b>Watchlist</b> to line it up here.</div>'; return; }
   q.forEach((i,idx)=>box.appendChild(itemCard(i,true,idx)));
 }
 function moveItem(e,idx,dir){
