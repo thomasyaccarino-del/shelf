@@ -142,7 +142,7 @@
 <div id="sheet"></div>
 
 <script>
-let scanner=null, scanning=false, items=[], filter='all', pendingBarcode='';
+let scanner=null, scanning=false, items=[], filter='all', pendingBarcode='', pendingMeta=null;
 let API_URL='', API_SECRET='';
 
 /* ---------- setup / config (stored on device) ---------- */
@@ -209,6 +209,7 @@ function toggleScanner(){
         setStatus('Scanned '+code+' — looking up the disc…','');
         api('scanBarcode',{code:code}).then(res=>{
           if(res.found && (res.results||[]).length){
+            pendingMeta=res.meta||null;
             document.getElementById('titleQuery').value=res.query||'';
             setStatus('Matched "'+res.discTitle+'"'+(res.year?' ('+res.year+')':'')+' — confirm below:','ok');
             renderCandidates(res.results);
@@ -234,6 +235,7 @@ function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.
 
 function searchByTitle(){
   const q=document.getElementById('titleQuery').value.trim(); if(!q) return;
+  pendingMeta=null;
   setStatus('Searching "'+q+'"…');
   api('searchTitles',{query:q}).then(res=>{
     const list=res.results||[];
@@ -254,25 +256,42 @@ function renderCandidates(list){
   });
 }
 
+function normalizeFormat_(f){
+  const s=String(f||'').toLowerCase();
+  if(s.indexOf('4k')>=0||s.indexOf('uhd')>=0||s.indexOf('ultra')>=0) return '4K UHD';
+  if(s.indexOf('blu')>=0) return 'Blu-ray';
+  if(s.indexOf('dvd')>=0) return 'DVD';
+  if(s.indexOf('digital')>=0) return 'Digital';
+  return ''; // unknown → no forced default
+}
+function fmtOptions_(sel){
+  const opts=['Blu-ray','4K UHD','DVD','Digital'];
+  let html='';
+  opts.forEach(o=>{ html+='<option'+(o===sel?' selected':'')+'>'+o+'</option>'; });
+  html+='<option value=""'+(sel?'':' selected')+'>—</option>';
+  return html;
+}
 function openAddSheet(r){
   const owned = !!pendingBarcode;
+  const scannedFmt = pendingMeta ? normalizeFormat_(pendingMeta.format) : '';
   openSheet(
     '<h3>'+esc(r.title)+' <span style="color:var(--muted);font-weight:300">'+(r.year||'')+'</span></h3>'+
     '<div class="sub">'+(r.type==='tv'?'TV series':'Movie')+(pendingBarcode?' · barcode '+pendingBarcode:'')+'</div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(owned?' on':'')+'" id="ownTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
     '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
-    '<select id="fmtSel"><option>Blu-ray</option><option>4K UHD</option><option>DVD</option><option>Digital</option><option value="">—</option></select></div>'+
+    '<select id="fmtSel">'+fmtOptions_(scannedFmt)+'</select></div>'+
     '<button class="btn btn-amber" id="addBtn">Add to shelf</button>');
   document.getElementById('addBtn').onclick=()=>{
     const item={id:r.id,type:r.type,title:r.title,year:r.year,poster:r.poster,
       owned:document.getElementById('ownTgl').classList.contains('on'),
-      format:document.getElementById('fmtSel').value, barcode:pendingBarcode};
+      format:document.getElementById('fmtSel').value, barcode:pendingBarcode,
+      meta:pendingMeta};
     document.getElementById('addBtn').textContent='Adding…';
     api('addItem',{item:item}).then(res=>{
       closeSheet();
       if(res.error){ setStatus(res.error,'err'); return; }
       setStatus('✓ Added '+res.title+(res.providers?' · streaming on '+res.providers:''),'ok');
-      pendingBarcode=''; document.getElementById('titleQuery').value='';
+      pendingBarcode=''; pendingMeta=null; document.getElementById('titleQuery').value='';
       document.getElementById('candidates').innerHTML=''; loadCollection();
     }).catch(e=>{ closeSheet(); setStatus('Add failed: '+e.message,'err'); });
   };
@@ -323,15 +342,23 @@ function itemCard(i, queueMode, idx){
   el.onclick=()=>openDetailSheet(i);
   return el;
 }
+function detailLine_(i){
+  const parts=[];
+  if(i.director) parts.push('Dir. '+esc(i.director));
+  if(i.runtime) parts.push(esc(i.runtime));
+  if(i.genre) parts.push(esc(i.genre));
+  return parts.join(' · ');
+}
 function openDetailSheet(i){
   openSheet(
     '<h3>'+esc(i.title)+' <span style="color:var(--muted);font-weight:300">'+(i.year||'')+'</span></h3>'+
     '<div class="sub">'+(i.type==='tv'?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
+    (detailLine_(i)?'<div class="sub" style="margin-top:-4px">'+detailLine_(i)+'</div>':'')+
     '<div class="optrow"><span>On my watchlist</span><div class="toggle'+(i.watchlist?' on':'')+'" id="dWatchlist"></div></div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(i.owned?' on':'')+'" id="dOwn"></div></div>'+
     '<div class="optrow"><span>Watched</span><div class="toggle'+(i.watched?' on':'')+'" id="dWatch"></div></div>'+
     '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
-    '<select id="dFmt"><option'+(i.format==='Blu-ray'?' selected':'')+'>Blu-ray</option><option'+(i.format==='4K UHD'?' selected':'')+'>4K UHD</option><option'+(i.format==='DVD'?' selected':'')+'>DVD</option><option'+(i.format==='Digital'?' selected':'')+'>Digital</option><option value=""'+(!i.format?' selected':'')+'>—</option></select></div>'+
+    '<select id="dFmt">'+fmtOptions_(i.format||'')+'</select></div>'+
     '<button class="btn btn-ghost" id="dRefresh">Refresh streaming info</button>'+
     '<button class="btn btn-ghost" id="dRemove" style="color:var(--red)">Remove from shelf</button>');
   document.getElementById('dWatchlist').onclick=function(){ this.classList.toggle('on'); push(i,{watchlist:this.classList.contains('on')}); };
