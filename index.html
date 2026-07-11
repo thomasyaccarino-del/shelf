@@ -299,8 +299,12 @@ function openAddSheet(r){
 
 /* ---------- Collection ---------- */
 function loadCollection(){
-  api('getCollection',{}).then(res=>{ items=res.items||[]; renderCollection(); renderQueue(); })
-    .catch(()=>{});
+  api('getCollection',{}).then(res=>{
+    if(res && res.error){ setStatus('Load error: '+res.error,'err'); return; }
+    items=(res && res.items)||[];
+    renderCollection(); renderQueue();
+    if(!items.length){ setStatus('Backend returned 0 items.','err'); }
+  }).catch(e=>{ setStatus('Could not load collection: '+(e && e.message ? e.message : e),'err'); });
 }
 function setFilter(btn){ filter=btn.dataset.f;
   document.querySelectorAll('.filters button').forEach(b=>b.classList.remove('on'));
@@ -308,15 +312,15 @@ function setFilter(btn){ filter=btn.dataset.f;
 function renderCollection(){
   const q=(document.getElementById('filterText').value||'').toLowerCase();
   const box=document.getElementById('collList'); box.innerHTML='';
-  let list=items.filter(i=>i.title.toLowerCase().includes(q));
+  let list=items.filter(i=>String(i.title||'').toLowerCase().includes(q));
   if(filter==='owned') list=list.filter(i=>i.owned);
   if(filter==='wish') list=list.filter(i=>!i.owned);
   if(filter==='watchlist') list=list.filter(i=>i.watchlist);
   if(filter==='unwatched') list=list.filter(i=>!i.watched);
   if(filter==='watched') list=list.filter(i=>i.watched);
   if(!list.length){ box.innerHTML='<div class="empty"><div class="big">&#127902;</div>Nothing here yet.<br>Scan a barcode to start your shelf.</div>'; return; }
-  list.sort((a,b)=>a.title.localeCompare(b.title));
-  list.forEach(i=>box.appendChild(itemCard(i,false)));
+  list.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
+  list.forEach(i=>{ try{ box.appendChild(itemCard(i,false)); }catch(e){ /* skip a bad row, keep the rest */ } });
 }
 function itemCard(i, queueMode, idx){
   const el=document.createElement('div'); el.className='card';
