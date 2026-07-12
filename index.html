@@ -335,15 +335,29 @@ function fmtOptions_(sel){
   html+='<option value=""'+(sel?'':' selected')+'>—</option>';
   return html;
 }
-function openAddSheet(r){
-  const owned = !!pendingBarcode;
+/* ---------- Add sheet: shared by the Scan tab and the Watch Next tab ----------
+   Both search boxes open THIS sheet, with the same three toggles (own / wishlist /
+   watchlist) and the same format picker. The only difference is the starting
+   position of the toggles and which status line gets the result:
+
+     from Scan       — watchlist defaults OFF; barcode scans default owned ON
+     from Watch Next — watchlist defaults ON (that's why you're on that tab)
+
+   Everything stays overridable in the sheet either way.
+------------------------------------------------------------------ */
+function openAddSheet(r, opts){
+  opts = opts || {};
+  const src = opts.source || 'scan';                 // 'scan' | 'queue'
+  const say = (m,c)=> src==='queue' ? setQueueStatus(m,c) : setStatus(m,c);
+  const owned = !!pendingBarcode;                    // a scanned disc is one you hold
+  const wantWatch = src==='queue';                   // Watch Next implies "plan to watch"
   const scannedFmt = pendingMeta ? normalizeFormat_(pendingMeta.format) : '';
   openSheet(
     '<h3>'+esc(r.title)+' <span style="color:var(--muted);font-weight:300">'+(r.year||'')+'</span></h3>'+
     '<div class="sub">'+(r.type==='tv'?'TV series':'Movie')+(pendingBarcode?' · barcode '+pendingBarcode:'')+'</div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(owned?' on':'')+'" id="ownTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
     '<div class="optrow"><span>Wishlist <span style="color:var(--muted);font-weight:300;font-size:12px">(want to buy)</span></span><div class="toggle" id="wishTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
-    '<div class="optrow"><span>Watchlist <span style="color:var(--muted);font-weight:300;font-size:12px">(plan to watch)</span></span><div class="toggle" id="watchTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
+    '<div class="optrow"><span>Watchlist <span style="color:var(--muted);font-weight:300;font-size:12px">(plan to watch)</span></span><div class="toggle'+(wantWatch?' on':'')+'" id="watchTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
     '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
     '<select id="fmtSel">'+fmtOptions_(scannedFmt)+'</select></div>'+
     '<button class="btn btn-amber" id="addBtn">Add to shelf</button>');
@@ -357,11 +371,16 @@ function openAddSheet(r){
     document.getElementById('addBtn').textContent='Adding…';
     api('addItem',{item:item}).then(res=>{
       closeSheet();
-      if(res.error){ setStatus(res.error,'err'); return; }
-      setStatus('✓ Added '+res.title+(res.providers?' · streaming on '+res.providers:''),'ok');
-      pendingBarcode=''; pendingMeta=null; document.getElementById('titleQuery').value='';
-      document.getElementById('candidates').innerHTML=''; loadCollection();
-    }).catch(e=>{ closeSheet(); setStatus('Add failed: '+e.message,'err'); });
+      if(res.error){ say(res.error,'err'); return; }
+      say('✓ Added '+res.title+(res.providers?' · streaming on '+res.providers:''),'ok');
+      pendingBarcode=''; pendingMeta=null;
+      if(src==='queue'){ clearQueueSearch_(); setTimeout(()=>setQueueStatus(''),2200); }
+      else {
+        document.getElementById('titleQuery').value='';
+        document.getElementById('candidates').innerHTML='';
+      }
+      loadCollection();
+    }).catch(e=>{ closeSheet(); say('Add failed: '+(e && e.message ? e.message : e),'err'); });
   };
 }
 
@@ -692,6 +711,9 @@ function markWatched(i){ push(i,{watched:true}); }
 ------------------------------------------------------------------ */
 function searchForQueue(){
   const q=document.getElementById('queueQuery').value.trim(); if(!q) return;
+  // A barcode/meta left over from an abandoned scan must not leak into this add —
+  // it would default "I own this" to on and tag the wrong title with that barcode.
+  pendingBarcode=''; pendingMeta=null;
   setQueueStatus('Searching "'+q+'"…','');
   api('searchTitles',{query:q}).then(res=>{
     if(res.error){ setQueueStatus('Search problem: '+res.error,'err'); renderQueueCandidates([]); return; }
@@ -707,7 +729,7 @@ function renderQueueCandidates(list){
   (list||[]).forEach(r=>{
     const el=document.createElement('div'); el.className='card';
     const already=items.find(i=>String(i.id)===String(r.id) && i.type===r.type);
-    const note=already ? (already.watchlist?' · already in your queue':' · in your collection — will add to queue') : '';
+    const note=already ? (already.watchlist?' · already in your queue — tap to edit':' · already on your shelf — tap to edit') : '';
     el.innerHTML=(r.poster?'<img src="'+r.poster+'">':'<div class="noimg">&#127916;</div>')+
       '<div class="info"><div class="t">'+esc(r.title)+'</div><div class="m">'+
       (r.year||'—')+' · '+(r.type==='tv'?'TV series':'Movie')+esc(note)+'</div></div>';
@@ -722,31 +744,17 @@ function clearQueueSearch_(){
 }
 
 function addToQueue(r, already){
-  if(already && already.watchlist){
-    setQueueStatus('"'+already.title+'" is already in your queue.','ok');
-    clearQueueSearch_();
-    return;
-  }
-  // Already in the collection — just flag it for watching, don't duplicate the row.
+  // Already in the collection — we can't add a second row (the backend rejects
+  // duplicates), so open the DETAIL sheet for the real row. Same three toggles,
+  // editing the title you actually have.
   if(already){
     clearQueueSearch_();
-    setQueueStatus('Adding "'+already.title+'" to your queue…','');
-    push(already,{watchlist:true});
-    setQueueStatus('✓ "'+already.title+'" added to your queue','ok');
-    setTimeout(()=>setQueueStatus(''),1800);
+    setQueueStatus('"'+already.title+'" is already on your shelf — updating it instead.','ok');
+    openDetailSheet(already);
     return;
   }
-  // Brand new: watchlist on, not owned, no wishlist. Owned/format come later.
-  setQueueStatus('Adding "'+r.title+'"…','');
-  const item={id:r.id,type:r.type,title:r.title,year:r.year,poster:r.poster,
-    owned:false, format:'', barcode:'', watchlist:true, wishlist:false, meta:null};
-  api('addItem',{item:item}).then(res=>{
-    clearQueueSearch_();
-    if(res.error){ setQueueStatus(res.error,'err'); return; }
-    setQueueStatus('✓ Added '+res.title+' to your queue'+(res.providers?' · streaming on '+res.providers:''),'ok');
-    loadCollection();
-    setTimeout(()=>setQueueStatus(''),2200);
-  }).catch(e=>setQueueStatus('Add failed: '+(e && e.message ? e.message : e),'err'));
+  // Brand new: same add sheet as the Scan tab, with Watchlist pre-set to on.
+  openAddSheet(r, {source:'queue'});
 }
 
 /* ---------- Drag & drop reordering (touch + mouse) ----------
