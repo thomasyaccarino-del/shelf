@@ -15,6 +15,7 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   body{margin:0; background:var(--bg); color:var(--text);
        font-family:'Outfit',system-ui,sans-serif; padding-bottom:76px}
+  body.dragging{overflow:hidden; -webkit-user-select:none; user-select:none}
   header{padding:18px 16px 8px}
   header h1{margin:0; font-size:22px; font-weight:800; letter-spacing:.08em}
   header h1 span{color:var(--amber)}
@@ -59,6 +60,19 @@
         border-radius:10px; width:38px; height:38px; font-size:16px; cursor:pointer; flex-shrink:0}
   .stack{display:flex; flex-direction:column; gap:6px}
   .num{font:800 14px 'Outfit'; color:var(--amber); width:26px; text-align:center; flex-shrink:0}
+
+  /* ---------- drag & drop (Watch Next) ---------- */
+  .card.q{touch-action:pan-y; cursor:grab}
+  .card.q .grip{width:22px; flex-shrink:0; color:var(--muted); font-size:17px;
+        line-height:1; text-align:center; letter-spacing:-1px; opacity:.6}
+  .card.q.lifted{cursor:grabbing; position:relative; z-index:5;
+        border-color:var(--amber); background:var(--surface2);
+        box-shadow:0 10px 26px rgba(0,0,0,.55); transform:scale(1.02);
+        opacity:.97}
+  .card.q.shift{transition:transform .16s ease}
+  .card.q.lifted .grip{color:var(--amber); opacity:1}
+  #queueList.dragging .card.q:not(.lifted){pointer-events:none}
+
   .filters{display:flex; gap:6px; margin-top:10px; overflow-x:auto; padding-bottom:2px}
   .filters button{border:1px solid var(--line); background:var(--surface); color:var(--muted);
         border-radius:99px; padding:7px 14px; font:600 12.5px 'Outfit'; white-space:nowrap; cursor:pointer}
@@ -149,8 +163,9 @@
 </div>
 
 <div class="screen" id="queue">
-  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. Arrows to reorder; &check; when watched.</p>
+  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. <b>Press and hold a card, then drag</b> to move it — or use the arrows. &check; when watched.</p>
   <div id="queueList"></div>
+  <div class="status" id="queueStatus"></div>
 </div>
 
 <div class="screen" id="stats">
@@ -205,6 +220,7 @@ function api(action, payload){
 }
 
 function show(id, btn){
+  if(drag.active) return;   // never navigate mid-drag
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
@@ -259,6 +275,8 @@ function toggleScanner(){
   }, 150);
 }
 function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.textContent=msg; el.className='status '+(cls||''); }
+function setQueueStatus(msg,cls){ const el=document.getElementById('queueStatus'); if(!el) return;
+  el.textContent=msg||''; el.className='status '+(cls||''); }
 
 function searchByTitle(){
   const q=document.getElementById('titleQuery').value.trim(); if(!q) return;
@@ -375,18 +393,20 @@ function renderCollection(){
   list.forEach(i=>{ try{ box.appendChild(itemCard(i,false)); }catch(e){ /* skip a bad row, keep the rest */ } });
 }
 function itemCard(i, queueMode, idx){
-  const el=document.createElement('div'); el.className='card';
+  const el=document.createElement('div'); el.className='card'+(queueMode?' q':'');
   let chips='';
   if(i.owned) chips+='<span class="chip owned">Owned'+(i.format?' · '+esc(i.format):'')+'</span>';
   else if(i.providers) chips+=i.providers.split(',').slice(0,3).map(p=>'<span class="chip stream">'+esc(p.trim())+'</span>').join('');
   else chips+='<span class="chip none">Not streaming — rent/buy</span>';
   if(i.watched) chips+='<span class="chip">Watched</span>';
   if(i.watchlist && !queueMode) chips+='<span class="chip" style="background:rgba(245,185,66,.12);color:var(--amber)">&#9733; Watchlist</span>';
-  el.innerHTML=(queueMode?'<div class="num">'+(idx+1)+'</div>':'')+
+  el.innerHTML=(queueMode?'<div class="grip">&#8942;&#8942;</div><div class="num">'+(idx+1)+'</div>':'')+
     (i.poster?'<img src="'+i.poster+'">':'<div class="noimg">&#127916;</div>')+
     '<div class="info"><div class="t">'+esc(i.title)+'</div><div class="m">'+(i.year||'—')+
     ' · '+(i.type==='tv'?'TV':'Movie')+'</div><div class="chips">'+chips+'</div></div>';
   if(queueMode){
+    el.dataset.key=i.type+':'+i.id;
+    el.dataset.idx=idx;
     const s=document.createElement('div'); s.className='stack';
     s.innerHTML='<button class="iconbtn" onclick="moveItem(event,'+idx+',-1)">&uarr;</button>'+
                 '<button class="iconbtn" onclick="moveItem(event,'+idx+',1)">&darr;</button>';
@@ -394,8 +414,9 @@ function itemCard(i, queueMode, idx){
     const w=document.createElement('button'); w.className='iconbtn'; w.style.color='var(--green)';
     w.innerHTML='&check;'; w.onclick=e=>{e.stopPropagation(); markWatched(i);};
     el.appendChild(w);
+    attachDrag_(el);
   }
-  el.onclick=()=>openDetailSheet(i);
+  el.onclick=()=>{ if(drag.suppressClick){ drag.suppressClick=false; return; } openDetailSheet(i); };
   return el;
 }
 function detailLine_(i){
@@ -526,9 +547,11 @@ function tile_(value,label,f,t,fmt,flat){
   const click=flat?'':' onclick="applyFilters(\''+f+'\',\''+t+'\',\''+fmt+'\')"';
   return '<div class="'+cls+'"'+click+'><div class="k">'+value+'</div><div class="l">'+esc(label)+'</div></div>';
 }
+
 /* ---------- Watch queue ---------- */
 function queueItems(){ return items.filter(i=>i.watchlist && !i.watched).sort((a,b)=>a.order-b.order); }
 function renderQueue(){
+  if(drag.active) return;   // don't yank the list out from under a finger
   const box=document.getElementById('queueList'); box.innerHTML='';
   const q=queueItems();
   if(!q.length){ box.innerHTML='<div class="empty"><div class="big">&#127871;</div>Your watchlist is empty.<br>Open any title and turn on <b>Watchlist</b> to line it up here.</div>'; return; }
@@ -539,11 +562,201 @@ function moveItem(e,idx,dir){
   const q=queueItems(); const j=idx+dir;
   if(j<0||j>=q.length) return;
   [q[idx],q[j]]=[q[j],q[idx]];
-  q.forEach((it,k)=>it.order=k+1);
+  commitOrder_(q);
+}
+
+// Single place that writes a new order: renumber locally, repaint, save.
+function commitOrder_(orderedItems){
+  orderedItems.forEach((it,k)=>it.order=k+1);
   renderQueue();
-  api('setWatchOrder',{orderedKeys:q.map(it=>it.type+':'+it.id)});
+  setQueueStatus('Saving order…','');
+  api('setWatchOrder',{orderedKeys:orderedItems.map(it=>it.type+':'+it.id)})
+    .then(res=>{
+      if(res && res.error){ setQueueStatus('Order not saved: '+res.error,'err'); return; }
+      setQueueStatus('✓ Order saved','ok');
+      setTimeout(()=>setQueueStatus(''), 1600);
+    })
+    .catch(e=>setQueueStatus('Order not saved: '+(e && e.message ? e.message : e),'err'));
 }
 function markWatched(i){ push(i,{watched:true}); }
+
+/* ---------- Drag & drop reordering (touch + mouse) ----------
+   Touch: press and hold ~350ms to lift a card, then drag. Holding first is what
+   keeps normal vertical scrolling working — a plain swipe still scrolls the page.
+   Mouse: drag straight away, no hold needed.
+   While lifted, the other cards slide out of the way with a transform so we can
+   compute the drop index without re-rendering the DOM on every pointer move.
+------------------------------------------------------------------ */
+const drag = {
+  active:false, el:null, key:'', from:0, to:0,
+  startY:0, lastY:0, holdTimer:null, suppressClick:false,
+  cards:[], tops:[], h:0, gap:10, step:0, scrollTimer:null, autoDir:0
+};
+
+function attachDrag_(el){
+  el.addEventListener('touchstart', onDragStart_, {passive:true});
+  el.addEventListener('touchmove',  onDragMove_,  {passive:false});
+  el.addEventListener('touchend',   onDragEnd_);
+  el.addEventListener('touchcancel',onDragEnd_);
+  el.addEventListener('mousedown',  onDragStart_);
+}
+
+function pointFrom_(e){
+  if(e.touches && e.touches.length) return e.touches[0];
+  if(e.changedTouches && e.changedTouches.length) return e.changedTouches[0];
+  return e;
+}
+
+function onDragStart_(e){
+  // Ignore presses that land on the arrow / watched buttons.
+  if(e.target.closest && e.target.closest('button')) return;
+  if(e.type==='mousedown' && e.button!==0) return;
+  const el=e.currentTarget;
+  const p=pointFrom_(e);
+  drag.el=el; drag.startY=p.clientY; drag.lastY=p.clientY;
+  drag.suppressClick=false;
+
+  if(e.type==='mousedown'){
+    e.preventDefault();
+    document.addEventListener('mousemove', onDragMove_);
+    document.addEventListener('mouseup',   onDragEnd_);
+    liftCard_();
+  } else {
+    // Touch: require a hold so a normal swipe still scrolls.
+    drag.holdTimer=setTimeout(()=>{
+      drag.holdTimer=null;
+      liftCard_();
+      if(navigator.vibrate) try{ navigator.vibrate(12); }catch(_){}
+    }, 350);
+  }
+}
+
+function liftCard_(){
+  const el=drag.el; if(!el) return;
+  const box=document.getElementById('queueList');
+  drag.cards=Array.prototype.slice.call(box.querySelectorAll('.card.q'));
+  if(drag.cards.length<2){ cleanupDrag_(); return; }
+
+  drag.from=drag.cards.indexOf(el);
+  drag.to=drag.from;
+  drag.key=el.dataset.key;
+
+  // Freeze geometry once — cards are uniform height, so a single measurement
+  // is enough and we avoid layout thrash on every move event.
+  const r0=drag.cards[0].getBoundingClientRect();
+  drag.h=r0.height;
+  drag.gap=10;                       // matches .card margin-top
+  drag.step=drag.h+drag.gap;
+  drag.tops=drag.cards.map(c=>c.getBoundingClientRect().top);
+
+  drag.active=true;
+  document.body.classList.add('dragging');
+  box.classList.add('dragging');
+  el.classList.add('lifted');
+  drag.cards.forEach(c=>{ if(c!==el) c.classList.add('shift'); });
+  setQueueStatus('Drag to reposition — release to drop.','');
+}
+
+function onDragMove_(e){
+  // Still in the hold window: if the finger travels, treat it as a scroll and bail.
+  if(drag.holdTimer){
+    const p=pointFrom_(e);
+    if(Math.abs(p.clientY-drag.startY) > 8){ clearTimeout(drag.holdTimer); drag.holdTimer=null; drag.el=null; }
+    return;
+  }
+  if(!drag.active) return;
+  e.preventDefault();               // stop the page scrolling under the drag
+  const p=pointFrom_(e);
+  drag.lastY=p.clientY;
+  positionDrag_();
+  autoScroll_(p.clientY);
+}
+
+function positionDrag_(){
+  const dy=drag.lastY-drag.startY;
+  drag.el.style.transform='translateY('+dy+'px) scale(1.02)';
+
+  // Which slot are we hovering? Round the travel to the nearest whole card.
+  let to=drag.from + Math.round(dy/drag.step);
+  to=Math.max(0, Math.min(drag.cards.length-1, to));
+  if(to===drag.to) return;
+  drag.to=to;
+
+  // Slide everything between the origin and the target out of the way.
+  drag.cards.forEach((c,idx)=>{
+    if(c===drag.el) return;
+    let shift=0;
+    if(drag.from < drag.to && idx>drag.from && idx<=drag.to) shift=-drag.step;
+    else if(drag.from > drag.to && idx>=drag.to && idx<drag.from) shift=drag.step;
+    c.style.transform = shift ? 'translateY('+shift+'px)' : '';
+  });
+  renumber_();
+}
+
+// Keep the visible "1, 2, 3…" badges truthful while dragging.
+function renumber_(){
+  const order=projectedOrder_();
+  order.forEach((c,idx)=>{ const n=c.querySelector('.num'); if(n) n.textContent=idx+1; });
+}
+function projectedOrder_(){
+  const arr=drag.cards.slice();
+  const moved=arr.splice(drag.from,1)[0];
+  arr.splice(drag.to,0,moved);
+  return arr;
+}
+
+// Drag near the top/bottom edge and the page creeps along with you.
+function autoScroll_(y){
+  const margin=90, speed=12;
+  let dir=0;
+  if(y < margin) dir=-1;
+  else if(y > window.innerHeight - margin - 60) dir=1;   // 60 ≈ the fixed nav bar
+  if(dir===drag.autoDir) return;
+  drag.autoDir=dir;
+  clearInterval(drag.scrollTimer); drag.scrollTimer=null;
+  if(!dir) return;
+  drag.scrollTimer=setInterval(()=>{
+    if(!drag.active){ clearInterval(drag.scrollTimer); drag.scrollTimer=null; return; }
+    const before=window.scrollY;
+    window.scrollBy(0, dir*speed);
+    const moved=window.scrollY-before;
+    // The card is positioned relative to its original spot, which scrolled too —
+    // shift the anchor so the card stays glued to the finger.
+    if(moved) drag.startY-=moved;
+    positionDrag_();
+  }, 16);
+}
+
+function onDragEnd_(e){
+  document.removeEventListener('mousemove', onDragMove_);
+  document.removeEventListener('mouseup',   onDragEnd_);
+  clearInterval(drag.scrollTimer); drag.scrollTimer=null; drag.autoDir=0;
+
+  if(drag.holdTimer){ clearTimeout(drag.holdTimer); drag.holdTimer=null; }
+  if(!drag.active){ drag.el=null; return; }
+
+  const from=drag.from, to=drag.to;
+  drag.suppressClick=true;          // a drag shouldn't also open the detail sheet
+  cleanupDrag_();
+
+  if(from===to){ renderQueue(); setQueueStatus(''); return; }
+
+  const q=queueItems();
+  const moved=q.splice(from,1)[0];
+  q.splice(to,0,moved);
+  commitOrder_(q);
+}
+
+function cleanupDrag_(){
+  const box=document.getElementById('queueList');
+  if(box) box.classList.remove('dragging');
+  document.body.classList.remove('dragging');
+  (drag.cards||[]).forEach(c=>{
+    c.classList.remove('lifted','shift');
+    c.style.transform='';
+  });
+  drag.active=false; drag.el=null; drag.cards=[]; drag.holdTimer=null;
+}
 
 function openSheet(html){ document.getElementById('sheet').innerHTML=html;
   document.getElementById('sheet').style.display='block';
