@@ -56,15 +56,21 @@
   .chip.owned{background:rgba(111,191,139,.15); color:var(--green)}
   .chip.stream{background:rgba(245,185,66,.12); color:var(--amber)}
   .chip.none{background:rgba(217,107,107,.12); color:var(--red)}
+  .chip.wish{background:rgba(245,185,66,.14); color:var(--amber)}
+  .chip.watch{background:rgba(111,191,139,.12); color:var(--green)}
   .iconbtn{background:var(--surface2); border:1px solid var(--line); color:var(--text);
         border-radius:10px; width:38px; height:38px; font-size:16px; cursor:pointer; flex-shrink:0}
   .stack{display:flex; flex-direction:column; gap:6px}
-  .num{font:800 14px 'Outfit'; color:var(--amber); width:26px; text-align:center; flex-shrink:0}
+  .num{font:800 14px 'Outfit'; color:var(--amber); text-align:center; line-height:1}
 
   /* ---------- drag & drop (Watch Next) ---------- */
-  .card.q{touch-action:pan-y; cursor:grab}
-  .card.q .grip{width:22px; flex-shrink:0; color:var(--muted); font-size:17px;
-        line-height:1; text-align:center; letter-spacing:-1px; opacity:.6}
+  /* Number sits ABOVE the grip in one narrow column, so the poster and title
+     get the horizontal room back instead of being squeezed by two side-by-side cells. */
+  .card.q{touch-action:pan-y; cursor:grab; gap:8px}
+  .card.q .qgrip{display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:5px; width:20px; flex-shrink:0}
+  .card.q .grip{color:var(--muted); font-size:16px; line-height:1;
+        letter-spacing:-1px; opacity:.55}
   .card.q.lifted{cursor:grabbing; position:relative; z-index:5;
         border-color:var(--amber); background:var(--surface2);
         box-shadow:0 10px 26px rgba(0,0,0,.55); transform:scale(1.02);
@@ -163,7 +169,14 @@
 </div>
 
 <div class="screen" id="queue">
-  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. <b>Press and hold a card, then drag</b> to move it — or use the arrows. &check; when watched.</p>
+  <p class="hint" style="margin-top:2px">Add something you plan to watch — owned or not. You can set owned/format later.</p>
+  <div class="row">
+    <input type="text" id="queueQuery" placeholder="Add a title to watch…" autocomplete="off"
+           onkeydown="if(event.key==='Enter')searchForQueue()">
+    <button class="iconbtn" style="width:52px;height:48px" onclick="searchForQueue()">&rarr;</button>
+  </div>
+  <div id="queueCandidates"></div>
+  <p class="hint">Your queue — <b>press and hold a card, then drag</b> to move it, or use the arrows. &check; when watched.</p>
   <div class="filters">
     <button class="on" data-q="all" onclick="setQueueTypeFilter(this)">Any type</button>
     <button data-q="movie" onclick="setQueueTypeFilter(this)">Movies</button>
@@ -329,12 +342,16 @@ function openAddSheet(r){
     '<h3>'+esc(r.title)+' <span style="color:var(--muted);font-weight:300">'+(r.year||'')+'</span></h3>'+
     '<div class="sub">'+(r.type==='tv'?'TV series':'Movie')+(pendingBarcode?' · barcode '+pendingBarcode:'')+'</div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(owned?' on':'')+'" id="ownTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
+    '<div class="optrow"><span>Wishlist <span style="color:var(--muted);font-weight:300;font-size:12px">(want to buy)</span></span><div class="toggle" id="wishTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
+    '<div class="optrow"><span>Watchlist <span style="color:var(--muted);font-weight:300;font-size:12px">(plan to watch)</span></span><div class="toggle" id="watchTgl" onclick="this.classList.toggle(\'on\')"></div></div>'+
     '<div class="optrow" style="border:none"><span style="margin-right:10px">Format</span>'+
     '<select id="fmtSel">'+fmtOptions_(scannedFmt)+'</select></div>'+
     '<button class="btn btn-amber" id="addBtn">Add to shelf</button>');
   document.getElementById('addBtn').onclick=()=>{
     const item={id:r.id,type:r.type,title:r.title,year:r.year,poster:r.poster,
       owned:document.getElementById('ownTgl').classList.contains('on'),
+      wishlist:document.getElementById('wishTgl').classList.contains('on'),
+      watchlist:document.getElementById('watchTgl').classList.contains('on'),
       format:document.getElementById('fmtSel').value, barcode:pendingBarcode,
       meta:pendingMeta};
     document.getElementById('addBtn').textContent='Adding…';
@@ -388,7 +405,7 @@ function renderCollection(){
   const box=document.getElementById('collList'); box.innerHTML='';
   let list=items.filter(i=>String(i.title||'').toLowerCase().includes(q));
   if(filter==='owned') list=list.filter(i=>i.owned);
-  if(filter==='wish') list=list.filter(i=>!i.owned);
+  if(filter==='wish') list=list.filter(i=>i.wishlist && !i.owned);
   if(filter==='watchlist') list=list.filter(i=>i.watchlist);
   if(filter==='unwatched') list=list.filter(i=>!i.watched);
   if(filter==='watched') list=list.filter(i=>i.watched);
@@ -405,8 +422,10 @@ function itemCard(i, queueMode, idx){
   else if(i.providers) chips+=i.providers.split(',').slice(0,3).map(p=>'<span class="chip stream">'+esc(p.trim())+'</span>').join('');
   else chips+='<span class="chip none">Not streaming — rent/buy</span>';
   if(i.watched) chips+='<span class="chip">Watched</span>';
-  if(i.watchlist && !queueMode) chips+='<span class="chip" style="background:rgba(245,185,66,.12);color:var(--amber)">&#9733; Watchlist</span>';
-  el.innerHTML=(queueMode?'<div class="grip">&#8942;&#8942;</div><div class="num">'+(idx+1)+'</div>':'')+
+  // Wishlist (want to buy) and Watchlist (plan to watch) are independent — show both.
+  if(i.wishlist && !i.owned) chips+='<span class="chip wish">&#128176; Wishlist</span>';
+  if(i.watchlist && !queueMode) chips+='<span class="chip watch">&#9654; Watchlist</span>';
+  el.innerHTML=(queueMode?'<div class="qgrip"><div class="num">'+(idx+1)+'</div><div class="grip">&#8942;&#8942;</div></div>':'')+
     (i.poster?'<img src="'+i.poster+'">':'<div class="noimg">&#127916;</div>')+
     '<div class="info"><div class="t">'+esc(i.title)+'</div><div class="m">'+(i.year||'—')+
     ' · '+(i.type==='tv'?'TV':'Movie')+'</div><div class="chips">'+chips+'</div></div>';
@@ -438,7 +457,8 @@ function openDetailSheet(i){
     '<h3>'+esc(i.title)+' <span style="color:var(--muted);font-weight:300">'+(i.year||'')+'</span></h3>'+
     '<div class="sub">'+(isTv?'TV series':'Movie')+(i.providers?' · Streaming: '+esc(i.providers):' · Not on streaming (rent/buy)')+'</div>'+
     (detailLine_(i)?'<div class="sub" style="margin-top:-4px">'+detailLine_(i)+'</div>':'')+
-    '<div class="optrow"><span>On my watchlist</span><div class="toggle'+(i.watchlist?' on':'')+'" id="dWatchlist"></div></div>'+
+    '<div class="optrow"><span>On my watchlist <span style="color:var(--muted);font-weight:300;font-size:12px">(plan to watch)</span></span><div class="toggle'+(i.watchlist?' on':'')+'" id="dWatchlist"></div></div>'+
+    '<div class="optrow"><span>On my wishlist <span style="color:var(--muted);font-weight:300;font-size:12px">(want to buy)</span></span><div class="toggle'+(i.wishlist?' on':'')+'" id="dWishlist"></div></div>'+
     '<div class="optrow"><span>I own this</span><div class="toggle'+(i.owned?' on':'')+'" id="dOwn"></div></div>'+
     '<div class="optrow"><span>Watched</span><div class="toggle'+(i.watched?' on':'')+'" id="dWatch"></div></div>'+
     '<div class="optrow"><span style="margin-right:10px">Format</span>'+
@@ -455,7 +475,18 @@ function openDetailSheet(i){
     '<button class="btn btn-ghost" id="dRefresh">Refresh streaming info</button>'+
     '<button class="btn btn-ghost" id="dRemove" style="color:var(--red)">Remove from shelf</button>');
   document.getElementById('dWatchlist').onclick=function(){ this.classList.toggle('on'); push(i,{watchlist:this.classList.contains('on')}); };
-  document.getElementById('dOwn').onclick=function(){ this.classList.toggle('on'); push(i,{owned:this.classList.contains('on')}); };
+  document.getElementById('dWishlist').onclick=function(){ this.classList.toggle('on'); push(i,{wishlist:this.classList.contains('on')}); };
+  document.getElementById('dOwn').onclick=function(){
+    this.classList.toggle('on');
+    const nowOwned=this.classList.contains('on');
+    // You can't still "want to buy" something you now own — drop it off the wishlist.
+    if(nowOwned && i.wishlist){
+      const w=document.getElementById('dWishlist'); if(w) w.classList.remove('on');
+      push(i,{owned:true, wishlist:false});
+    } else {
+      push(i,{owned:nowOwned});
+    }
+  };
   document.getElementById('dWatch').onclick=function(){ this.classList.toggle('on'); push(i,{watched:this.classList.contains('on')}); };
   document.getElementById('dFmt').onchange=function(){ push(i,{format:this.value}); };
   // Save on blur (tap away) so typing isn't interrupted by a save per keystroke.
@@ -653,6 +684,70 @@ function commitOrder_(visibleOrdered){
     .catch(e=>setQueueStatus('Order not saved: '+(e && e.message ? e.message : e),'err'));
 }
 function markWatched(i){ push(i,{watched:true}); }
+
+/* ---------- Add to the queue straight from Watch Next ----------
+   Adds with watchlist:true and owned:false — you set owned/format later from the
+   detail sheet. If the title is ALREADY in the collection we don't add a duplicate
+   row (the backend would reject it anyway); we just switch its watchlist on.
+------------------------------------------------------------------ */
+function searchForQueue(){
+  const q=document.getElementById('queueQuery').value.trim(); if(!q) return;
+  setQueueStatus('Searching "'+q+'"…','');
+  api('searchTitles',{query:q}).then(res=>{
+    if(res.error){ setQueueStatus('Search problem: '+res.error,'err'); renderQueueCandidates([]); return; }
+    const list=res.results||[];
+    setQueueStatus(list.length?'Tap a title to add it to your queue:':'No matches — try a shorter title.', list.length?'ok':'err');
+    renderQueueCandidates(list);
+  }).catch(e=>setQueueStatus('Search failed: '+(e && e.message ? e.message : e),'err'));
+}
+
+function renderQueueCandidates(list){
+  const box=document.getElementById('queueCandidates'); if(!box) return;
+  box.innerHTML='';
+  (list||[]).forEach(r=>{
+    const el=document.createElement('div'); el.className='card';
+    const already=items.find(i=>String(i.id)===String(r.id) && i.type===r.type);
+    const note=already ? (already.watchlist?' · already in your queue':' · in your collection — will add to queue') : '';
+    el.innerHTML=(r.poster?'<img src="'+r.poster+'">':'<div class="noimg">&#127916;</div>')+
+      '<div class="info"><div class="t">'+esc(r.title)+'</div><div class="m">'+
+      (r.year||'—')+' · '+(r.type==='tv'?'TV series':'Movie')+esc(note)+'</div></div>';
+    el.onclick=()=>addToQueue(r, already);
+    box.appendChild(el);
+  });
+}
+
+function clearQueueSearch_(){
+  document.getElementById('queueQuery').value='';
+  document.getElementById('queueCandidates').innerHTML='';
+}
+
+function addToQueue(r, already){
+  if(already && already.watchlist){
+    setQueueStatus('"'+already.title+'" is already in your queue.','ok');
+    clearQueueSearch_();
+    return;
+  }
+  // Already in the collection — just flag it for watching, don't duplicate the row.
+  if(already){
+    clearQueueSearch_();
+    setQueueStatus('Adding "'+already.title+'" to your queue…','');
+    push(already,{watchlist:true});
+    setQueueStatus('✓ "'+already.title+'" added to your queue','ok');
+    setTimeout(()=>setQueueStatus(''),1800);
+    return;
+  }
+  // Brand new: watchlist on, not owned, no wishlist. Owned/format come later.
+  setQueueStatus('Adding "'+r.title+'"…','');
+  const item={id:r.id,type:r.type,title:r.title,year:r.year,poster:r.poster,
+    owned:false, format:'', barcode:'', watchlist:true, wishlist:false, meta:null};
+  api('addItem',{item:item}).then(res=>{
+    clearQueueSearch_();
+    if(res.error){ setQueueStatus(res.error,'err'); return; }
+    setQueueStatus('✓ Added '+res.title+' to your queue'+(res.providers?' · streaming on '+res.providers:''),'ok');
+    loadCollection();
+    setTimeout(()=>setQueueStatus(''),2200);
+  }).catch(e=>setQueueStatus('Add failed: '+(e && e.message ? e.message : e),'err'));
+}
 
 /* ---------- Drag & drop reordering (touch + mouse) ----------
    Touch: press and hold ~350ms to lift a card, then drag. Holding first is what
