@@ -15,6 +15,7 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   body{margin:0; background:var(--bg); color:var(--text);
        font-family:'Outfit',system-ui,sans-serif; padding-bottom:76px}
+  body.dragging{overflow:hidden; -webkit-user-select:none; user-select:none}
   header{padding:18px 16px 8px}
   header h1{margin:0; font-size:22px; font-weight:800; letter-spacing:.08em}
   header h1 span{color:var(--amber)}
@@ -59,6 +60,19 @@
         border-radius:10px; width:38px; height:38px; font-size:16px; cursor:pointer; flex-shrink:0}
   .stack{display:flex; flex-direction:column; gap:6px}
   .num{font:800 14px 'Outfit'; color:var(--amber); width:26px; text-align:center; flex-shrink:0}
+
+  /* ---------- drag & drop (Watch Next) ---------- */
+  .card.q{touch-action:pan-y; cursor:grab}
+  .card.q .grip{width:22px; flex-shrink:0; color:var(--muted); font-size:17px;
+        line-height:1; text-align:center; letter-spacing:-1px; opacity:.6}
+  .card.q.lifted{cursor:grabbing; position:relative; z-index:5;
+        border-color:var(--amber); background:var(--surface2);
+        box-shadow:0 10px 26px rgba(0,0,0,.55); transform:scale(1.02);
+        opacity:.97}
+  .card.q.shift{transition:transform .16s ease}
+  .card.q.lifted .grip{color:var(--amber); opacity:1}
+  #queueList.dragging .card.q:not(.lifted){pointer-events:none}
+
   .filters{display:flex; gap:6px; margin-top:10px; overflow-x:auto; padding-bottom:2px}
   .filters button{border:1px solid var(--line); background:var(--surface); color:var(--muted);
         border-radius:99px; padding:7px 14px; font:600 12.5px 'Outfit'; white-space:nowrap; cursor:pointer}
@@ -149,13 +163,14 @@
 </div>
 
 <div class="screen" id="queue">
-  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. Arrows to reorder; &check; when watched.</p>
+  <p class="hint" style="margin-top:4px">Unwatched titles in your chosen order. <b>Press and hold a card, then drag</b> to move it — or use the arrows. &check; when watched.</p>
   <div class="filters">
     <button class="on" data-q="all" onclick="setQueueTypeFilter(this)">Any type</button>
     <button data-q="movie" onclick="setQueueTypeFilter(this)">Movies</button>
     <button data-q="tv" onclick="setQueueTypeFilter(this)">TV</button>
   </div>
   <div id="queueList"></div>
+  <div class="status" id="queueStatus"></div>
 </div>
 
 <div class="screen" id="stats">
@@ -174,7 +189,8 @@
 <div id="sheet"></div>
 
 <script>
-let scanner=null, scanning=false, items=[], filter='all', typeFilter='all', fmtFilter='all', queueTypeFilter='all', pendingBarcode='', pendingMeta=null;
+let scanner=null, scanning=false, items=[], filter='all', typeFilter='all', fmtFilter='all', pendingBarcode='', pendingMeta=null;
+let queueTypeFilter='all';
 let API_URL='', API_SECRET='';
 
 /* ---------- setup / config (stored on device) ---------- */
@@ -210,6 +226,7 @@ function api(action, payload){
 }
 
 function show(id, btn){
+  if(drag.active) return;   // never navigate mid-drag
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
@@ -264,6 +281,8 @@ function toggleScanner(){
   }, 150);
 }
 function setStatus(msg,cls){ const el=document.getElementById('scanStatus'); el.textContent=msg; el.className='status '+(cls||''); }
+function setQueueStatus(msg,cls){ const el=document.getElementById('queueStatus'); if(!el) return;
+  el.textContent=msg||''; el.className='status '+(cls||''); }
 
 function searchByTitle(){
   const q=document.getElementById('titleQuery').value.trim(); if(!q) return;
@@ -380,18 +399,20 @@ function renderCollection(){
   list.forEach(i=>{ try{ box.appendChild(itemCard(i,false)); }catch(e){ /* skip a bad row, keep the rest */ } });
 }
 function itemCard(i, queueMode, idx){
-  const el=document.createElement('div'); el.className='card';
+  const el=document.createElement('div'); el.className='card'+(queueMode?' q':'');
   let chips='';
   if(i.owned) chips+='<span class="chip owned">Owned'+(i.format?' · '+esc(i.format):'')+'</span>';
   else if(i.providers) chips+=i.providers.split(',').slice(0,3).map(p=>'<span class="chip stream">'+esc(p.trim())+'</span>').join('');
   else chips+='<span class="chip none">Not streaming — rent/buy</span>';
   if(i.watched) chips+='<span class="chip">Watched</span>';
   if(i.watchlist && !queueMode) chips+='<span class="chip" style="background:rgba(245,185,66,.12);color:var(--amber)">&#9733; Watchlist</span>';
-  el.innerHTML=(queueMode?'<div class="num">'+(idx+1)+'</div>':'')+
+  el.innerHTML=(queueMode?'<div class="grip">&#8942;&#8942;</div><div class="num">'+(idx+1)+'</div>':'')+
     (i.poster?'<img src="'+i.poster+'">':'<div class="noimg">&#127916;</div>')+
     '<div class="info"><div class="t">'+esc(i.title)+'</div><div class="m">'+(i.year||'—')+
     ' · '+(i.type==='tv'?'TV':'Movie')+'</div><div class="chips">'+chips+'</div></div>';
   if(queueMode){
+    el.dataset.key=i.type+':'+i.id;
+    el.dataset.idx=idx;
     const s=document.createElement('div'); s.className='stack';
     s.innerHTML='<button class="iconbtn" onclick="moveItem(event,'+idx+',-1)">&uarr;</button>'+
                 '<button class="iconbtn" onclick="moveItem(event,'+idx+',1)">&darr;</button>';
@@ -399,8 +420,9 @@ function itemCard(i, queueMode, idx){
     const w=document.createElement('button'); w.className='iconbtn'; w.style.color='var(--green)';
     w.innerHTML='&check;'; w.onclick=e=>{e.stopPropagation(); markWatched(i);};
     el.appendChild(w);
+    attachDrag_(el);
   }
-  el.onclick=()=>openDetailSheet(i);
+  el.onclick=()=>{ if(drag.suppressClick){ drag.suppressClick=false; return; } openDetailSheet(i); };
   return el;
 }
 function detailLine_(i){
@@ -483,6 +505,9 @@ function renderStats(){
   const seasons=tv.reduce((s,i)=>s+(Number(i.seasons)||0),0);
   const episodes=tv.reduce((s,i)=>s+(Number(i.episodes)||0),0);
 
+  const fmts=countFormats_(movies);
+  const tvFmts=countFormats_(tv);
+
   const T=hm_(totalMins), M=hm_(movieMins), V=hm_(tvMins);
 
   let html='';
@@ -498,7 +523,12 @@ function renderStats(){
   html+='</div>';
 
   html+='<div class="sect">Movies by format</div><div class="tiles">';
-  html+=formatTiles_(movies,'movie','No owned movies yet.');
+  const mKeys=fmtKeys_(fmts);
+  if(!mKeys.length){ html+='<div class="tile flat wide"><div class="l">No owned movies yet.</div></div>'; }
+  mKeys.forEach(f=>{
+    const target=(f==='Unspecified')?'all':f;
+    html+=tile_(fmts[f], f, 'owned','movie',target);
+  });
   html+='</div>';
 
   html+='<div class="sect">Television</div><div class="tiles">';
@@ -507,7 +537,12 @@ function renderStats(){
   html+='</div>';
 
   html+='<div class="sect">TV by format</div><div class="tiles">';
-  html+=formatTiles_(tv,'tv','No owned TV shows yet.');
+  const tKeys=fmtKeys_(tvFmts);
+  if(!tKeys.length){ html+='<div class="tile flat wide"><div class="l">No owned TV shows yet.</div></div>'; }
+  tKeys.forEach(f=>{
+    const target=(f==='Unspecified')?'all':f;
+    html+=tile_(tvFmts[f], f, 'owned','tv',target);
+  });
   const tvNoRuntime=tv.filter(i=>!mins_(i.runtime)).length;
   if(tvNoRuntime){
     html+='<div class="tile flat wide"><div class="l">'+tvNoRuntime+' owned TV title'+(tvNoRuntime>1?'s are':' is')+
@@ -519,77 +554,284 @@ function renderStats(){
   box.innerHTML=html;
 }
 
-// Count owned titles of one type by format, and emit clickable tiles.
-// "Unspecified" can't map to a format filter, so it jumps to the unfiltered type.
-function formatTiles_(list,type,emptyMsg){
-  const fmts={};
-  list.forEach(i=>{ const f=i.format||'Unspecified'; fmts[f]=(fmts[f]||0)+1; });
+// Count owned titles by format. "Unspecified" collects anything with a blank format.
+function countFormats_(list){
+  const out={};
+  list.forEach(i=>{ const f=i.format||'Unspecified'; out[f]=(out[f]||0)+1; });
+  return out;
+}
+// Consistent display order; anything unrecognized falls to the end.
+function fmtKeys_(fmts){
   const order=['4K UHD','Blu-ray','DVD','Digital','Unspecified'];
-  const keys=Object.keys(fmts).sort((a,b)=>{
+  return Object.keys(fmts).sort((a,b)=>{
     const ia=order.indexOf(a), ib=order.indexOf(b);
     return (ia<0?99:ia)-(ib<0?99:ib);
   });
-  if(!keys.length) return '<div class="tile flat wide"><div class="l">'+esc(emptyMsg)+'</div></div>';
-  let html='';
-  keys.forEach(f=>{
-    const target=(f==='Unspecified')?'all':f;
-    html+=tile_(fmts[f], f, 'owned', type, target);
-  });
-  return html;
 }
 function tile_(value,label,f,t,fmt,flat){
   const cls='tile'+(flat?' flat wide':'');
   const click=flat?'':' onclick="applyFilters(\''+f+'\',\''+t+'\',\''+fmt+'\')"';
   return '<div class="'+cls+'"'+click+'><div class="k">'+value+'</div><div class="l">'+esc(label)+'</div></div>';
 }
-/* ---------- Watch queue ---------- */
-// The FULL queue is always the source of truth for ordering. The type filter only
-// changes what's shown; a move while filtered swaps the two visible neighbours in
-// place inside the full list, so hidden titles keep their positions.
-function queueItems(){ return items.filter(i=>i.watchlist && !i.watched).sort((a,b)=>a.order-b.order); }
-function visibleQueueItems(){
-  const q=queueItems();
+
+/* ---------- Watch queue ----------
+   queueAll_()     — every watchlisted, unwatched title, in saved order. The real queue.
+   queueVisible_() — just the ones the type filter is showing. What's on screen.
+
+   Reordering (arrows or drag) happens against the VISIBLE list, but we always save
+   the FULL list. With a filter on, the hidden titles keep the slots they already had:
+   we rebuild the full order by walking the original positions and dropping the
+   reshuffled visible items back into the slots visible items used to occupy. So
+   sorting your movies never disturbs where the TV shows sit, and vice versa.
+------------------------------------------------------------------ */
+function queueAll_(){ return items.filter(i=>i.watchlist && !i.watched).sort((a,b)=>a.order-b.order); }
+function queueVisible_(){
+  const q=queueAll_();
   return queueTypeFilter==='all' ? q : q.filter(i=>i.type===queueTypeFilter);
 }
-function setQueueTypeFilter(btn){ queueTypeFilter=btn.dataset.q;
+// Back-compat alias — some callers still say queueItems().
+function queueItems(){ return queueVisible_(); }
+
+function setQueueTypeFilter(btn){
+  queueTypeFilter=btn.dataset.q;
   document.querySelectorAll('.filters button[data-q]').forEach(b=>b.classList.remove('on'));
-  btn.classList.add('on'); renderQueue(); }
+  btn.classList.add('on');
+  setQueueStatus('');
+  renderQueue();
+}
 
 function renderQueue(){
-  const box=document.getElementById('queueList'); box.innerHTML='';
-  if(!queueItems().length){
+  if(drag.active) return;   // don't yank the list out from under a finger
+  const box=document.getElementById('queueList'); if(!box) return;
+  box.innerHTML='';
+  const all=queueAll_();
+  if(!all.length){
     box.innerHTML='<div class="empty"><div class="big">&#127871;</div>Your watchlist is empty.<br>Open any title and turn on <b>Watchlist</b> to line it up here.</div>';
     return;
   }
-  const vis=visibleQueueItems();
-  if(!vis.length){
-    box.innerHTML='<div class="empty"><div class="big">&#127902;</div>No '+
-      (queueTypeFilter==='tv'?'TV shows':'movies')+' in your watch queue.</div>';
+  const q=queueVisible_();
+  if(!q.length){
+    const what=queueTypeFilter==='tv'?'TV shows':'movies';
+    box.innerHTML='<div class="empty"><div class="big">&#127902;</div>No '+what+' on your watchlist.</div>';
     return;
   }
-  vis.forEach((i,idx)=>box.appendChild(itemCard(i,true,idx)));
+  q.forEach((i,idx)=>box.appendChild(itemCard(i,true,idx)));
 }
 
-// idx is the position in the VISIBLE list; translate it to the full list before moving.
 function moveItem(e,idx,dir){
   e.stopPropagation();
-  const full=queueItems();
-  const vis=visibleQueueItems();
-  const j=idx+dir;
-  if(j<0||j>=vis.length) return;
-  const a=full.indexOf(vis[idx]), b=full.indexOf(vis[j]);
-  if(a<0||b<0) return;
-  [full[a],full[b]]=[full[b],full[a]];
-  commitOrder_(full);
+  const q=queueVisible_(); const j=idx+dir;
+  if(j<0||j>=q.length) return;
+  [q[idx],q[j]]=[q[j],q[idx]];
+  commitOrder_(q);
 }
 
-// Single writer of a new order: renumber locally, repaint, then persist.
-function commitOrder_(full){
+// Take a reordered VISIBLE list and rebuild the full queue around it.
+// Hidden titles keep their existing slots; visible titles refill the slots
+// that visible titles already held, in their new sequence.
+function mergeVisibleOrder_(visibleOrdered){
+  const all=queueAll_();
+  if(queueTypeFilter==='all') return visibleOrdered.slice();
+  const isVisible=i=>i.type===queueTypeFilter;
+  let n=0;
+  return all.map(i=> isVisible(i) ? visibleOrdered[n++] : i);
+}
+
+// Single place that writes a new order: renumber locally, repaint, save.
+// Always saves the FULL queue, never just the filtered slice.
+function commitOrder_(visibleOrdered){
+  const full=mergeVisibleOrder_(visibleOrdered);
   full.forEach((it,k)=>it.order=k+1);
   renderQueue();
-  api('setWatchOrder',{orderedKeys:full.map(it=>it.type+':'+it.id)});
+  setQueueStatus('Saving order…','');
+  api('setWatchOrder',{orderedKeys:full.map(it=>it.type+':'+it.id)})
+    .then(res=>{
+      if(res && res.error){ setQueueStatus('Order not saved: '+res.error,'err'); return; }
+      setQueueStatus('✓ Order saved','ok');
+      setTimeout(()=>setQueueStatus(''), 1600);
+    })
+    .catch(e=>setQueueStatus('Order not saved: '+(e && e.message ? e.message : e),'err'));
 }
 function markWatched(i){ push(i,{watched:true}); }
+
+/* ---------- Drag & drop reordering (touch + mouse) ----------
+   Touch: press and hold ~350ms to lift a card, then drag. Holding first is what
+   keeps normal vertical scrolling working — a plain swipe still scrolls the page.
+   Mouse: drag straight away, no hold needed.
+   While lifted, the other cards slide out of the way with a transform so we can
+   compute the drop index without re-rendering the DOM on every pointer move.
+------------------------------------------------------------------ */
+const drag = {
+  active:false, el:null, key:'', from:0, to:0,
+  startY:0, lastY:0, holdTimer:null, suppressClick:false,
+  cards:[], tops:[], h:0, gap:10, step:0, scrollTimer:null, autoDir:0
+};
+
+function attachDrag_(el){
+  el.addEventListener('touchstart', onDragStart_, {passive:true});
+  el.addEventListener('touchmove',  onDragMove_,  {passive:false});
+  el.addEventListener('touchend',   onDragEnd_);
+  el.addEventListener('touchcancel',onDragEnd_);
+  el.addEventListener('mousedown',  onDragStart_);
+}
+
+function pointFrom_(e){
+  if(e.touches && e.touches.length) return e.touches[0];
+  if(e.changedTouches && e.changedTouches.length) return e.changedTouches[0];
+  return e;
+}
+
+function onDragStart_(e){
+  // Ignore presses that land on the arrow / watched buttons.
+  if(e.target.closest && e.target.closest('button')) return;
+  if(e.type==='mousedown' && e.button!==0) return;
+  const el=e.currentTarget;
+  const p=pointFrom_(e);
+  drag.el=el; drag.startY=p.clientY; drag.lastY=p.clientY;
+  drag.suppressClick=false;
+
+  if(e.type==='mousedown'){
+    e.preventDefault();
+    document.addEventListener('mousemove', onDragMove_);
+    document.addEventListener('mouseup',   onDragEnd_);
+    liftCard_();
+  } else {
+    // Touch: require a hold so a normal swipe still scrolls.
+    drag.holdTimer=setTimeout(()=>{
+      drag.holdTimer=null;
+      liftCard_();
+      if(navigator.vibrate) try{ navigator.vibrate(12); }catch(_){}
+    }, 350);
+  }
+}
+
+function liftCard_(){
+  const el=drag.el; if(!el) return;
+  const box=document.getElementById('queueList');
+  drag.cards=Array.prototype.slice.call(box.querySelectorAll('.card.q'));
+  if(drag.cards.length<2){ cleanupDrag_(); return; }
+
+  drag.from=drag.cards.indexOf(el);
+  drag.to=drag.from;
+  drag.key=el.dataset.key;
+
+  // Freeze geometry once — cards are uniform height, so a single measurement
+  // is enough and we avoid layout thrash on every move event.
+  const r0=drag.cards[0].getBoundingClientRect();
+  drag.h=r0.height;
+  drag.gap=10;                       // matches .card margin-top
+  drag.step=drag.h+drag.gap;
+  drag.tops=drag.cards.map(c=>c.getBoundingClientRect().top);
+
+  drag.active=true;
+  document.body.classList.add('dragging');
+  box.classList.add('dragging');
+  el.classList.add('lifted');
+  drag.cards.forEach(c=>{ if(c!==el) c.classList.add('shift'); });
+  setQueueStatus('Drag to reposition — release to drop.','');
+}
+
+function onDragMove_(e){
+  // Still in the hold window: if the finger travels, treat it as a scroll and bail.
+  if(drag.holdTimer){
+    const p=pointFrom_(e);
+    if(Math.abs(p.clientY-drag.startY) > 8){ clearTimeout(drag.holdTimer); drag.holdTimer=null; drag.el=null; }
+    return;
+  }
+  if(!drag.active) return;
+  e.preventDefault();               // stop the page scrolling under the drag
+  const p=pointFrom_(e);
+  drag.lastY=p.clientY;
+  positionDrag_();
+  autoScroll_(p.clientY);
+}
+
+function positionDrag_(){
+  const dy=drag.lastY-drag.startY;
+  drag.el.style.transform='translateY('+dy+'px) scale(1.02)';
+
+  // Which slot are we hovering? Round the travel to the nearest whole card.
+  let to=drag.from + Math.round(dy/drag.step);
+  to=Math.max(0, Math.min(drag.cards.length-1, to));
+  if(to===drag.to) return;
+  drag.to=to;
+
+  // Slide everything between the origin and the target out of the way.
+  drag.cards.forEach((c,idx)=>{
+    if(c===drag.el) return;
+    let shift=0;
+    if(drag.from < drag.to && idx>drag.from && idx<=drag.to) shift=-drag.step;
+    else if(drag.from > drag.to && idx>=drag.to && idx<drag.from) shift=drag.step;
+    c.style.transform = shift ? 'translateY('+shift+'px)' : '';
+  });
+  renumber_();
+}
+
+// Keep the visible "1, 2, 3…" badges truthful while dragging.
+function renumber_(){
+  const order=projectedOrder_();
+  order.forEach((c,idx)=>{ const n=c.querySelector('.num'); if(n) n.textContent=idx+1; });
+}
+function projectedOrder_(){
+  const arr=drag.cards.slice();
+  const moved=arr.splice(drag.from,1)[0];
+  arr.splice(drag.to,0,moved);
+  return arr;
+}
+
+// Drag near the top/bottom edge and the page creeps along with you.
+function autoScroll_(y){
+  const margin=90, speed=12;
+  let dir=0;
+  if(y < margin) dir=-1;
+  else if(y > window.innerHeight - margin - 60) dir=1;   // 60 ≈ the fixed nav bar
+  if(dir===drag.autoDir) return;
+  drag.autoDir=dir;
+  clearInterval(drag.scrollTimer); drag.scrollTimer=null;
+  if(!dir) return;
+  drag.scrollTimer=setInterval(()=>{
+    if(!drag.active){ clearInterval(drag.scrollTimer); drag.scrollTimer=null; return; }
+    const before=window.scrollY;
+    window.scrollBy(0, dir*speed);
+    const moved=window.scrollY-before;
+    // The card is positioned relative to its original spot, which scrolled too —
+    // shift the anchor so the card stays glued to the finger.
+    if(moved) drag.startY-=moved;
+    positionDrag_();
+  }, 16);
+}
+
+function onDragEnd_(e){
+  document.removeEventListener('mousemove', onDragMove_);
+  document.removeEventListener('mouseup',   onDragEnd_);
+  clearInterval(drag.scrollTimer); drag.scrollTimer=null; drag.autoDir=0;
+
+  if(drag.holdTimer){ clearTimeout(drag.holdTimer); drag.holdTimer=null; }
+  if(!drag.active){ drag.el=null; return; }
+
+  const from=drag.from, to=drag.to;
+  drag.suppressClick=true;          // a drag shouldn't also open the detail sheet
+  cleanupDrag_();
+
+  if(from===to){ renderQueue(); setQueueStatus(''); return; }
+
+  // Indices are positions in the VISIBLE list; commitOrder_ merges back to the full queue.
+  const q=queueVisible_();
+  const moved=q.splice(from,1)[0];
+  q.splice(to,0,moved);
+  commitOrder_(q);
+}
+
+function cleanupDrag_(){
+  const box=document.getElementById('queueList');
+  if(box) box.classList.remove('dragging');
+  document.body.classList.remove('dragging');
+  (drag.cards||[]).forEach(c=>{
+    c.classList.remove('lifted','shift');
+    c.style.transform='';
+  });
+  drag.active=false; drag.el=null; drag.cards=[]; drag.holdTimer=null;
+}
 
 function openSheet(html){ document.getElementById('sheet').innerHTML=html;
   document.getElementById('sheet').style.display='block';
